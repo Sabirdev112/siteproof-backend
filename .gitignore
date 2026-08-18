@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+uploads/
+*.log
+.DS_Store
+Thumbs.db
+coverage/
+dist/
+.idea/
+.vscode/
+_spec_extract.txt
+n8n_webhooks.md
+frontend_api.md
+phases.md
+SiteProof_Technical_Spec.pdf
