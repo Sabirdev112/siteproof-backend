@@ -4,6 +4,8 @@ import { ok } from '../../lib/http.js';
 import { query } from '../../db/query.js';
 import { API_PHASE } from '../../config/constants.js';
 import { embeddingsEnabled } from '../../lib/pgvector.js';
+import { env } from '../../config/env.js';
+import { cloudinaryConfigured } from '../../storage/cloudinary.js';
 
 export const healthRouter = Router();
 
@@ -23,6 +25,9 @@ healthRouter.get(
       db: 'up',
       phase: API_PHASE,
       pgvector: (await embeddingsEnabled()) ? 'up' : 'skipped',
+      storage: env.STORAGE_DRIVER,
+      cloudinary: cloudinaryConfigured() ? 'configured' : 'unset',
+      openai: env.OPENAI_API_KEY ? 'set' : 'unset',
     });
   }),
 );

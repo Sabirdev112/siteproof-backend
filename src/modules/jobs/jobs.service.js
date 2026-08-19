@@ -46,6 +46,17 @@ function visibilityWhere(user, { workerId } = {}) {
   };
 }
 
+export async function getAccessibleJobRow(user, jobId) {
+  const vis = visibilityWhere(user);
+  const params = [...vis.params, jobId];
+  const result = await query(
+    `SELECT j.* FROM jobs j WHERE ${vis.sql} AND j.id = $${params.length}`,
+    params,
+  );
+  if (!result.rows[0]) throw new AppError('Job not found', 404, 'NOT_FOUND');
+  return result.rows[0];
+}
+
 const SUMMARY_SELECT = `
   SELECT
     j.id, j.site, j.job_type, j.rulebook_id, j.status, j.created_at, j.closed_at,

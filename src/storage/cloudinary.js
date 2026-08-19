@@ -2,12 +2,12 @@ import { v2 as cloudinary } from 'cloudinary';
 import { env } from '../config/env.js';
 import { AppError } from '../lib/AppError.js';
 
-function configured() {
+export function cloudinaryConfigured() {
   return Boolean(env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET);
 }
 
 function ensureConfig() {
-  if (!configured()) {
+  if (!cloudinaryConfigured()) {
     throw new AppError(
       'Cloudinary is not configured (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET)',
       500,
@@ -48,8 +48,13 @@ export const cloudinaryDriver = {
     return { key: `${resourceType}:${result.public_id}` };
   },
 
-  async getBuffer() {
-    throw new AppError('Cloudinary objects are read via signed URL, not buffer', 500, 'STORAGE_ERROR');
+  async getBuffer(storageKey) {
+    const url = await this.getSignedUrl(storageKey, { expiresIn: 120 });
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new AppError(`Cloudinary fetch failed (${res.status})`, 502, 'STORAGE_ERROR');
+    }
+    return Buffer.from(await res.arrayBuffer());
   },
 
   async getSignedUrl(storageKey, { expiresIn } = {}) {

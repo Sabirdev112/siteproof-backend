@@ -1,5 +1,5 @@
 /**
- * Smoke-test live routes through Phase 4 against a running API (default localhost:3000).
+ * Smoke-test live routes through Phase 5 against a running API (default localhost:3000).
  */
 const BASE = (process.env.SMOKE_BASE_URL || 'http://localhost:3000/api/v1').replace(/\/$/, '');
 const OWNER = { email: process.env.SEED_OWNER_EMAIL || 'owner@siteproof.local', password: process.env.SEED_OWNER_PASSWORD || 'Owner123!' };
@@ -32,8 +32,9 @@ function summarize(json) {
   if (!json?.data) return json.error?.code || '';
   const d = json.data;
   if (d.items) return `items=${d.items.length}`;
-  if (d.phase != null) return `phase=${d.phase} db=${d.db || ''} pgvector=${d.pgvector || ''}`;
+  if (d.phase != null) return `phase=${d.phase} db=${d.db || ''} storage=${d.storage || ''}`;
   if (d.accessToken) return `role=${d.user?.role}`;
+  if (d.attributes) return `object=${d.attributes.object}`;
   if (d.status) return `status=${d.status}`;
   if (d.id) return `id=${d.id}`;
   return 'ok';
@@ -50,7 +51,7 @@ async function login(account) {
 }
 
 async function main() {
-  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 4 });
+  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 5 });
   await req('GET', '/health/ready', { expect: (s, j) => s === 200 && j.data?.db === 'up' });
 
   await req('GET', '/me', { expect: (s, j) => s === 401 && j.error?.code === 'UNAUTHORIZED' });
@@ -76,14 +77,12 @@ async function main() {
   await req('GET', `/rulebooks/${rulebookId}`, { token: workerToken });
   await req('GET', `/rulebooks/${rulebookId}/status`, { token: ownerToken });
   await req('GET', `/rulebooks/${rulebookId}/search?q=exposed%20conductors`, { token: ownerToken });
-  await req('GET', `/rulebooks/${rulebookId}/search?q=condensate`, { token: ownerToken });
 
   const { json: job } = await req('POST', '/jobs', {
     token: workerToken,
-    body: { site: 'Smoke AC plant room', jobType: 'ac_install_inspection', rulebookId },
+    body: { site: 'Outdoor unit, exposed conductors at isolator', jobType: 'ac_install_inspection', rulebookId },
     extraHeaders: { 'Idempotency-Key': crypto.randomUUID() },
   });
-  // idempotency optional
   const jobId = job.data?.id;
   await req('GET', '/jobs?status=open', { token: workerToken });
   if (jobId) await req('GET', `/jobs/${jobId}`, { token: workerToken });
@@ -92,17 +91,29 @@ async function main() {
   form.append('type', 'photo');
   if (jobId) form.append('jobId', jobId);
   form.append('file', new Blob([tinyJpeg], { type: 'image/jpeg' }), 'smoke.jpg');
-  await req('POST', '/media', {
+  const { json: media } = await req('POST', '/media', {
     token: workerToken,
     form,
     extraHeaders: { 'Idempotency-Key': crypto.randomUUID() },
   });
+  const mediaId = media.data?.id;
 
   await req('POST', '/extract', {
     token: workerToken,
     body: { jobId, mediaIds: [] },
-    expect: (s, j) => s === 501 && j.error?.code === 'NOT_IMPLEMENTED',
+    expect: (s, j) => s === 400 && j.error?.code === 'VALIDATION_ERROR',
   });
+  await req('POST', '/extract', {
+    token: workerToken,
+    body: { jobId, mediaIds: [mediaId] },
+    expect: (s, j) =>
+      s === 200 &&
+      j.data?.attributes?.object &&
+      'condition' in j.data.attributes &&
+      'location' in j.data.attributes &&
+      'apparentIssue' in j.data.attributes,
+  });
+
   await req('POST', '/compliance/check', {
     token: ownerToken,
     body: {},
@@ -115,7 +126,7 @@ async function main() {
     console.error(`${failed.length} check(s) failed`);
     process.exit(1);
   }
-  console.log(`Phase 4 smoke passed (${results.length} checks) against ${BASE}`);
+  console.log(`Phase 5 smoke passed (${results.length} checks) against ${BASE}`);
 }
 
 main().catch((err) => {

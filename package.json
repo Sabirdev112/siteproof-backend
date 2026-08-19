@@ -13,7 +13,8 @@
     "migrate": "node --env-file=.env src/db/migrate.js",
     "seed": "node --env-file=.env src/db/seed.js",
     "generate:sop": "node src/data/writeAcSopPdf.js",
-    "smoke": "node --env-file=.env scripts/smoke.js"
+    "smoke": "node --env-file=.env scripts/smoke.js",
+    "test:cloudinary": "node --env-file=.env scripts/test-cloudinary.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

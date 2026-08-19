@@ -33,9 +33,18 @@ const schema = z.object({
 
   STORAGE_DRIVER: z.enum(['local', 'cloudinary']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('uploads'),
-  CLOUDINARY_CLOUD_NAME: z.string().optional(),
-  CLOUDINARY_API_KEY: z.string().optional(),
-  CLOUDINARY_API_SECRET: z.string().optional(),
+  CLOUDINARY_CLOUD_NAME: z
+    .string()
+    .optional()
+    .transform((value) => value?.trim() || undefined),
+  CLOUDINARY_API_KEY: z
+    .string()
+    .optional()
+    .transform((value) => value?.trim() || undefined),
+  CLOUDINARY_API_SECRET: z
+    .string()
+    .optional()
+    .transform((value) => value?.trim() || undefined),
   CLOUDINARY_FOLDER: z.string().default('siteproof'),
   MEDIA_SIGN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   PUBLIC_API_URL: z.union([z.string().url(), z.literal('')]).optional(),
@@ -50,6 +59,8 @@ const schema = z.object({
     .optional()
     .transform((value) => (value?.trim() ? value.trim() : undefined)),
   EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
+  OPENAI_VISION_MODEL: z.string().default('gpt-4o-mini'),
+  OPENAI_TRANSCRIBE_MODEL: z.string().default('whisper-1'),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -15,8 +15,9 @@ export const queues = {
     },
   },
   extraction: {
-    async add() {
-      throw notImplemented('Extraction queue (Phase 5)');
+    async add(payload) {
+      const { extractFinding } = await import('../modules/extraction/extraction.service.js');
+      return extractFinding(payload.user, payload.body);
     },
   },
   outbox: {
