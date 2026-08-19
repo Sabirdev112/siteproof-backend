@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 export const ROLES = Object.freeze(['worker', 'supervisor', 'owner']);
 export const JOB_STATUSES = Object.freeze(['open', 'closed']);
 export const VERDICTS = Object.freeze(['pass', 'review', 'fail']);
@@ -24,5 +22,8 @@ export const PERMISSIONS = Object.freeze({
   'team:invite': ['supervisor', 'owner'],
   'dashboard:read': ['supervisor', 'owner'],
   'issues:manage': ['supervisor', 'owner'],
+  'settings:read': ['worker', 'supervisor', 'owner'],
   'settings:write': ['owner'],
 });
+
+export const API_PHASE = 2;

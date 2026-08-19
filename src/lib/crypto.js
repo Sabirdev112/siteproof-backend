@@ -1,4 +1,12 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
+
+export function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+export function randomToken() {
+  return randomBytes(48).toString('base64url');
+}
 
 export function signPayload(secret, body, timestamp) {
   return createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
