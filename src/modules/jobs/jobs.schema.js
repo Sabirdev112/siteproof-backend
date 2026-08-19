@@ -17,6 +17,7 @@ export const listJobsSchema = z.object({
   query: z
     .object({
       status: z.enum(['open', 'closed']).optional(),
+      headline: z.enum(['open', 'pass', 'review', 'fail']).optional(),
       site: z.string().optional(),
       workerId: optionalUuid,
       from: z.string().optional(),

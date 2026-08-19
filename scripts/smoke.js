@@ -1,5 +1,5 @@
 /**
- * Smoke-test live routes through Phase 7 against a running API (default localhost:3000).
+ * Smoke-test live routes through Phase 8 against a running API (default localhost:3000).
  */
 const BASE = (process.env.SMOKE_BASE_URL || 'http://localhost:3000/api/v1').replace(/\/$/, '');
 const OWNER = { email: process.env.SEED_OWNER_EMAIL || 'owner@siteproof.local', password: process.env.SEED_OWNER_PASSWORD || 'Owner123!' };
@@ -41,7 +41,9 @@ function summarize(json) {
   if (d.findings) return `findings=${d.findings.length} status=${d.status}`;
   if (d.report) return `status=${d.status} report=${d.report.status}`;
   if (d.pdfStorageKey !== undefined) return `report=${d.status}`;
-  if (d.status) return `status=${d.status}`;
+  if (d.today != null) return `today=${d.today} recent=${d.recentJobs?.length ?? 0}`;
+  if (d.reply) return `citations=${d.citations?.length ?? 0}`;
+  if (d.assignedTo !== undefined) return `issue=${d.status}`;
   if (d.id) return `id=${d.id}`;
   return 'ok';
 }
@@ -57,7 +59,7 @@ async function login(account) {
 }
 
 async function main() {
-  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 7 });
+  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 8 });
   await req('GET', '/health/ready', { expect: (s, j) => s === 200 && j.data?.db === 'up' });
   await req('GET', '/me', { expect: (s, j) => s === 401 && j.error?.code === 'UNAUTHORIZED' });
 
@@ -160,13 +162,48 @@ async function main() {
     expect: (s, j) => s === 409 && j.error?.code === 'CONFLICT',
   });
 
+  await req('GET', '/dashboard/summary', { token: workerToken, expect: (s, j) => s === 403 && j.error?.code === 'FORBIDDEN' });
+  const { json: summary } = await req('GET', '/dashboard/summary', {
+    token: ownerToken,
+    expect: (s, j) => s === 200 && typeof j.data?.today === 'number' && Array.isArray(j.data?.recentJobs),
+  });
+  await req('GET', `/jobs?headline=${summary.data.recentJobs[0]?.headline || 'fail'}`, {
+    token: ownerToken,
+    expect: (s, j) => s === 200 && Array.isArray(j.data?.items),
+  });
+
+  const { json: issues } = await req('GET', '/issues?status=open', {
+    token: ownerToken,
+    expect: (s, j) => s === 200 && Array.isArray(j.data?.items),
+  });
+  const issueId = issues.data.items[0]?.id;
+  if (issueId) {
+    const { json: me } = await req('GET', '/me', { token: ownerToken });
+    await req('PATCH', `/issues/${issueId}`, {
+      token: ownerToken,
+      body: { status: 'assigned', assignedTo: me.data.id },
+      expect: (s, j) => s === 200 && j.data?.status === 'assigned',
+    });
+    await req('PATCH', `/issues/${issueId}`, {
+      token: ownerToken,
+      body: { status: 'resolved' },
+      expect: (s, j) => s === 200 && j.data?.status === 'resolved',
+    });
+  }
+
+  await req('POST', '/query/chat', {
+    token: ownerToken,
+    body: { rulebookId, message: 'What does the SOP say about exposed conductors?' },
+    expect: (s, j) => s === 200 && typeof j.data?.reply === 'string' && Array.isArray(j.data?.citations),
+  });
+
   const failed = results.filter((r) => !r.ok);
   console.table(results.map(({ ok, status, method, path, snippet }) => ({ ok, status, method, path, snippet })));
   if (failed.length) {
     console.error(`${failed.length} check(s) failed`);
     process.exit(1);
   }
-  console.log(`Phase 7 smoke passed (${results.length} checks) against ${BASE}`);
+  console.log(`Phase 8 smoke passed (${results.length} checks) against ${BASE}`);
 }
 
 main().catch((err) => {

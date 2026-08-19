@@ -24,6 +24,11 @@ export function publicOrg(org) {
 }
 
 export function jobSummary(row) {
+  const counts = {
+    pass: Number(row.pass_count ?? 0),
+    review: Number(row.review_count ?? 0),
+    fail: Number(row.fail_count ?? 0),
+  };
   return {
     id: row.id,
     site: row.site,
@@ -35,11 +40,8 @@ export function jobSummary(row) {
     workerId: row.worker_id,
     workerName: row.worker_name,
     findingCount: Number(row.finding_count ?? 0),
-    verdictSummary: {
-      pass: Number(row.pass_count ?? 0),
-      review: Number(row.review_count ?? 0),
-      fail: Number(row.fail_count ?? 0),
-    },
+    headline: headlineFromCounts(counts),
+    verdictSummary: counts,
   };
 }
 

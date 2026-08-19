@@ -22,9 +22,10 @@ export const PERMISSIONS = Object.freeze({
   'team:invite': ['supervisor', 'owner'],
   'dashboard:read': ['supervisor', 'owner'],
   'issues:manage': ['supervisor', 'owner'],
+  'query:chat': ['supervisor', 'owner'],
   'settings:read': ['worker', 'supervisor', 'owner'],
   'settings:write': ['owner'],
 });
 
-export const API_PHASE = 7;
+export const API_PHASE = 8;
 export const EMBEDDING_DIM = 1536;

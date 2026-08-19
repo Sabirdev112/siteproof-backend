@@ -144,12 +144,39 @@ export async function listJobs(user, queryParams, pagination) {
   }
 
   const whereSql = where.join(' AND ');
-  const count = await query(`SELECT COUNT(*)::int AS total FROM jobs j WHERE ${whereSql}`, params);
+  const headlineSql = `CASE
+    WHEN COUNT(f.id) FILTER (WHERE f.verdict = 'fail') > 0 THEN 'fail'
+    WHEN COUNT(f.id) FILTER (WHERE f.verdict = 'review') > 0 THEN 'review'
+    WHEN COUNT(f.id) FILTER (WHERE f.verdict = 'pass') > 0 THEN 'pass'
+    ELSE 'open'
+  END`;
+
+  let havingSql = '';
+  if (queryParams.headline) {
+    params.push(queryParams.headline);
+    havingSql = `HAVING ${headlineSql} = $${params.length}`;
+  }
+
+  const count = havingSql
+    ? await query(
+        `SELECT COUNT(*)::int AS total FROM (
+           SELECT j.id
+           FROM jobs j
+           LEFT JOIN findings f ON f.job_id = j.id
+           WHERE ${whereSql}
+           GROUP BY j.id
+           ${havingSql}
+         ) counted`,
+        params,
+      )
+    : await query(`SELECT COUNT(*)::int AS total FROM jobs j WHERE ${whereSql}`, params);
+
   params.push(pagination.limit, pagination.offset);
   const rows = await query(
     `${SUMMARY_SELECT}
      WHERE ${whereSql}
      GROUP BY j.id, u.id
+     ${havingSql}
      ORDER BY j.created_at DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
