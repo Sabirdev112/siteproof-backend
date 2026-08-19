@@ -3,6 +3,7 @@ import { asyncHandler } from '../../lib/asyncHandler.js';
 import { ok } from '../../lib/http.js';
 import { query } from '../../db/query.js';
 import { API_PHASE } from '../../config/constants.js';
+import { embeddingsEnabled } from '../../lib/pgvector.js';
 
 export const healthRouter = Router();
 
@@ -17,6 +18,11 @@ healthRouter.get(
   '/ready',
   asyncHandler(async (_req, res) => {
     await query('SELECT 1');
-    ok(res, { status: 'ready', db: 'up' });
+    ok(res, {
+      status: 'ready',
+      db: 'up',
+      phase: API_PHASE,
+      pgvector: (await embeddingsEnabled()) ? 'up' : 'skipped',
+    });
   }),
 );

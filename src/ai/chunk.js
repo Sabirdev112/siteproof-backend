@@ -1,50 +1,27 @@
-const HEADING =
-  /^(?:SOP\s*)?(?:§\s*)?(\d+(?:\.\d+){0,3})(?:\s*[:.)-]\s*|\s+)(.+)$/i;
+const MARK = /SOP\s*§\s*(\d+(?:\.\d+){0,3})\s+([^\n.]{3,80})/gi;
 
 function tokenCount(text) {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
-function flush(chunks, current) {
-  const content = current.body.join(' ').replace(/\s+/g, ' ').trim();
-  if (!content) return;
-  chunks.push({
-    clauseRef: current.ref,
-    content: current.title ? `${current.title}. ${content}` : content,
-    tokenCount: tokenCount(content),
-  });
-}
-
-/** Split SOP text on numbered / § clause headings. */
-export function chunkByClause(raw) {
-  const lines = String(raw)
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+function splitOnMarkers(raw) {
+  const text = String(raw).replace(/\r/g, '\n');
+  const matches = [...text.matchAll(MARK)];
+  if (matches.length < 3) return null;
 
   const chunks = [];
-  let current = { ref: 'SOP §0', title: '', body: [] };
-
-  for (const line of lines) {
-    const match = line.match(HEADING);
-    if (match && Number(match[1].split('.')[0]) >= 1) {
-      flush(chunks, current);
-      current = {
-        ref: `SOP §${match[1]}`,
-        title: match[2].replace(/\.$/, '').trim(),
-        body: [],
-      };
-      continue;
-    }
-    current.body.push(line);
+  for (let i = 0; i < matches.length; i += 1) {
+    const start = matches[i].index;
+    const end = i + 1 < matches.length ? matches[i + 1].index : text.length;
+    const block = text.slice(start, end).replace(/\s+/g, ' ').trim();
+    if (block.length < 40) continue;
+    chunks.push({
+      clauseRef: `SOP §${matches[i][1]}`,
+      content: block,
+      tokenCount: tokenCount(block),
+    });
   }
-  flush(chunks, current);
-
-  if (chunks.length <= 1 && raw.trim().length > 400) {
-    return fallbackWindows(raw);
-  }
-  return chunks.filter((c) => c.content.length > 40);
+  return chunks;
 }
 
 function fallbackWindows(raw, size = 900, overlap = 120) {
@@ -63,4 +40,11 @@ function fallbackWindows(raw, size = 900, overlap = 120) {
     i += size - overlap;
   }
   return out;
+}
+
+/** Split SOP text on numbered / § clause headings. */
+export function chunkByClause(raw) {
+  const marked = splitOnMarkers(raw);
+  if (marked?.length) return marked;
+  return fallbackWindows(raw);
 }

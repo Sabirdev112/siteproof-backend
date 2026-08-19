@@ -16,11 +16,18 @@ async function defaultRulebookId(orgId, requestedId) {
     return requestedId;
   }
 
-  const result = await query(
+  const ready = await query(
+    `SELECT id FROM rulebooks WHERE org_id = $1 AND status = 'ready' ORDER BY created_at ASC LIMIT 2`,
+    [orgId],
+  );
+  if (ready.rows.length === 1) return ready.rows[0].id;
+  if (ready.rows.length > 1) return null;
+
+  const any = await query(
     `SELECT id FROM rulebooks WHERE org_id = $1 ORDER BY created_at ASC LIMIT 2`,
     [orgId],
   );
-  if (result.rows.length === 1) return result.rows[0].id;
+  if (any.rows.length === 1) return any.rows[0].id;
   return null;
 }
 

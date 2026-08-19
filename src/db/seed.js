@@ -1,9 +1,13 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
 import { logger } from '../lib/logger.js';
 import { pool } from './pool.js';
-import { withTransaction } from './query.js';
+import { query, withTransaction } from './query.js';
+import { AC_SOP } from '../data/acSop.js';
+import { buildAcSopPdf } from '../data/generateAcSopPdf.js';
+import { seedRulebookFromPdf } from '../modules/rulebooks/rulebooks.service.js';
 
 const ROUNDS = 12;
 
@@ -78,11 +82,46 @@ export async function seed() {
     return { orgId, orgName, users };
   });
 
+  const rulebook = await seedAcSop(result.orgId);
+
   logger.info(
-    { org: result.orgName, emails: result.users.map((user) => `${user.role}:${user.email}`) },
+    {
+      org: result.orgName,
+      emails: result.users.map((user) => `${user.role}:${user.email}`),
+      rulebook: { id: rulebook.id, status: rulebook.status, chunks: rulebook.chunkCount },
+    },
     'seed complete',
   );
-  return result;
+  return { ...result, rulebook };
+}
+
+async function seedAcSop(orgId) {
+  const pdf = await buildAcSopPdf();
+  const dataDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../data');
+  await fs.mkdir(dataDir, { recursive: true });
+  await fs.writeFile(path.join(dataDir, 'ac-sop.pdf'), pdf);
+
+  const existing = await query(
+    `SELECT r.id, r.status, COUNT(c.id)::int AS chunks
+     FROM rulebooks r
+     LEFT JOIN rulebook_chunks c ON c.rulebook_id = r.id
+     WHERE r.org_id = $1 AND r.title = $2
+     GROUP BY r.id
+     LIMIT 1`,
+    [orgId, AC_SOP.title],
+  );
+  if (existing.rows[0]?.status === 'ready' && existing.rows[0].chunks > 0) {
+    logger.info({ id: existing.rows[0].id, chunks: existing.rows[0].chunks }, 'ac sop already ingested');
+    return { id: existing.rows[0].id, status: existing.rows[0].status, chunkCount: existing.rows[0].chunks };
+  }
+
+  return seedRulebookFromPdf({
+    orgId,
+    title: AC_SOP.title,
+    vertical: AC_SOP.vertical,
+    filename: 'ac-sop.pdf',
+    buffer: pdf,
+  });
 }
 
 const thisFile = path.normalize(fileURLToPath(import.meta.url));

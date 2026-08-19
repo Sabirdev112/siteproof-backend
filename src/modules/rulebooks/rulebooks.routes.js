@@ -1,13 +1,49 @@
-import { stubRouter } from '../createStubRouter.js';
+import { Router } from 'express';
+import { asyncHandler } from '../../lib/asyncHandler.js';
+import { authorize } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
+import { singleFileUpload } from '../../lib/upload.js';
+import { PDF_MAX_BYTES } from '../../lib/mediaTypes.js';
+import {
+  createRulebookSchema,
+  rulebookIdSchema,
+  searchRulebookSchema,
+} from './rulebooks.schema.js';
+import * as rulebooksController from './rulebooks.controller.js';
 
-export const rulebooksRouter = stubRouter(
-  [
-    ['get', '/'],
-    ['post', '/'],
-    ['get', '/:id'],
-    ['post', '/:id/documents'],
-    ['get', '/:id/status'],
-    ['get', '/:id/search'],
-  ],
-  'Phase 4',
+const pdfUpload = singleFileUpload({ maxBytes: PDF_MAX_BYTES });
+
+export const rulebooksRouter = Router();
+
+rulebooksRouter.get('/', authorize('rulebooks:read'), asyncHandler(rulebooksController.list));
+rulebooksRouter.post(
+  '/',
+  authorize('rulebooks:write'),
+  validate(createRulebookSchema),
+  asyncHandler(rulebooksController.create),
+);
+rulebooksRouter.get(
+  '/:id/status',
+  authorize('rulebooks:write'),
+  validate(rulebookIdSchema),
+  asyncHandler(rulebooksController.status),
+);
+rulebooksRouter.get(
+  '/:id/search',
+  authorize('rulebooks:write'),
+  validate(searchRulebookSchema),
+  asyncHandler(rulebooksController.search),
+);
+rulebooksRouter.post(
+  '/:id/documents',
+  authorize('rulebooks:write'),
+  validate(rulebookIdSchema),
+  pdfUpload,
+  asyncHandler(rulebooksController.upload),
+);
+rulebooksRouter.get(
+  '/:id',
+  authorize('rulebooks:read'),
+  validate(rulebookIdSchema),
+  asyncHandler(rulebooksController.getById),
 );
