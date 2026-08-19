@@ -1,3 +1,4 @@
+import { logger } from '../../lib/logger.js';
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../../lib/AppError.js';
 import { query, withTransaction } from '../../db/query.js';
@@ -6,7 +7,8 @@ import { PDF_MIMES, PDF_MAX_BYTES } from '../../lib/mediaTypes.js';
 import { queues } from '../../queues/index.js';
 import { ai } from '../../ai/index.js';
 import { embeddingsEnabled } from '../../lib/pgvector.js';
-import { wiringSearchBoost } from '../../lib/wiring.js';
+import { WIRING_CLAUSE_RE, WIRING_RE, wiringSearchBoost } from '../../lib/wiring.js';
+import { refreshRulebookStatus } from './rulebooks.ingest.js';
 
 function serializeRulebook(row) {
   return {
@@ -45,7 +47,26 @@ export async function listRulebooks(user) {
      ORDER BY r.created_at ASC`,
     [user.org_id],
   );
-  return { items: result.rows.map(serializeRulebook) };
+  const docs = await query(
+    `SELECT d.id, d.rulebook_id, d.filename, d.status, d.error
+     FROM rulebook_documents d
+     JOIN rulebooks r ON r.id = d.rulebook_id
+     WHERE r.org_id = $1
+     ORDER BY d.created_at ASC`,
+    [user.org_id],
+  );
+  const byBook = new Map();
+  for (const row of docs.rows) {
+    const list = byBook.get(row.rulebook_id) || [];
+    list.push(serializeDocument(row));
+    byBook.set(row.rulebook_id, list);
+  }
+  return {
+    items: result.rows.map((row) => ({
+      ...serializeRulebook(row),
+      documents: byBook.get(row.id) || [],
+    })),
+  };
 }
 
 export async function createRulebook(user, body) {
@@ -105,38 +126,63 @@ export async function addDocument(user, rulebookId, file) {
   });
 
   await queues.ingestion.add({ documentId: doc.id });
-  return { id: doc.id, filename: doc.filename, status: 'processing', error: null };
+  return { id: doc.id, filename: doc.filename, status: 'processing', error: null, rulebookId };
 }
 
-export async function retrieveChunks(rulebookId, q, limit = 8) {
-  const cap = Math.min(20, Math.max(1, Number(limit) || 8));
-  q = wiringSearchBoost(q);
+export async function deleteDocument(user, rulebookId, documentId) {
+  await getOwned(user.org_id, rulebookId);
+  const found = await query(
+    `SELECT * FROM rulebook_documents WHERE id = $1 AND rulebook_id = $2`,
+    [documentId, rulebookId],
+  );
+  const doc = found.rows[0];
+  if (!doc) throw new AppError('Document not found', 404, 'NOT_FOUND');
 
-  if (await embeddingsEnabled()) {
-    const vec = await ai.embedQuery(q);
-    const result = await query(
-      `SELECT id, clause_ref, content,
-              GREATEST(0, LEAST(1, 1 - (embedding <=> $1::vector))) AS score
-       FROM rulebook_chunks
-       WHERE rulebook_id = $2 AND embedding IS NOT NULL
-       ORDER BY embedding <=> $1::vector
-       LIMIT $3`,
-      [vec, rulebookId, cap],
-    );
-    if (result.rows.length) {
-      return result.rows.map((row) => ({
-        id: row.id,
-        clauseRef: row.clause_ref,
-        content: row.content,
-        score: Number(Number(row.score).toFixed(2)),
-      }));
+  await query(`DELETE FROM rulebook_documents WHERE id = $1`, [documentId]);
+
+  if (doc.storage_key && typeof storage.remove === 'function') {
+    try {
+      await storage.remove(doc.storage_key);
+    } catch (err) {
+      logger.warn({ err, key: doc.storage_key }, 'rulebook document storage remove failed');
     }
   }
 
+  const left = await query(`SELECT COUNT(*)::int AS n FROM rulebook_documents WHERE rulebook_id = $1`, [rulebookId]);
+  if (!left.rows[0].n) {
+    await query(`UPDATE jobs SET rulebook_id = NULL WHERE rulebook_id = $1`, [rulebookId]);
+    await query(`DELETE FROM rulebooks WHERE id = $1`, [rulebookId]);
+    return { id: documentId, deleted: true, rulebookDeleted: true };
+  }
+
+  await refreshRulebookStatus(null, rulebookId);
+  return { id: documentId, deleted: true, rulebookDeleted: false };
+}
+
+function mapChunkRows(rows, scoreKey = 'rank') {
+  return rows.map((row) => ({
+    id: row.id,
+    clauseRef: row.clause_ref,
+    content: row.content,
+    score: Number(
+      Math.min(1, scoreKey === 'score' ? Number(row.score) : Number(row.rank) * 4 || 0.5).toFixed(2),
+    ),
+  }));
+}
+
+function preferWiring(q, items) {
+  if (!WIRING_RE.test(q)) return items;
+  return [...items].sort((a, b) => {
+    const aw = WIRING_CLAUSE_RE.test(`${a.clauseRef || ''} ${a.content || ''}`) ? 0 : 1;
+    const bw = WIRING_CLAUSE_RE.test(`${b.clauseRef || ''} ${b.content || ''}`) ? 0 : 1;
+    return aw - bw;
+  });
+}
+
+async function lexicalChunks(rulebookId, q, cap) {
   const like = `%${q}%`;
-  let result;
   try {
-    result = await query(
+    const result = await query(
       `SELECT id, clause_ref, content,
               ts_rank(
                 to_tsvector('english', coalesce(clause_ref, '') || ' ' || content),
@@ -153,23 +199,61 @@ export async function retrieveChunks(rulebookId, q, limit = 8) {
        LIMIT $4`,
       [rulebookId, q, like, cap],
     );
+    if (result.rows.length) return mapChunkRows(result.rows);
   } catch {
-    result = await query(
-      `SELECT id, clause_ref, content, 0.5::float AS rank
-       FROM rulebook_chunks
-       WHERE rulebook_id = $1 AND (content ILIKE $2 OR coalesce(clause_ref, '') ILIKE $2)
-       ORDER BY created_at ASC
-       LIMIT $3`,
-      [rulebookId, like, cap],
-    );
+    /* websearch syntax; fall through to ILIKE */
   }
 
-  return result.rows.map((row) => ({
-    id: row.id,
-    clauseRef: row.clause_ref,
-    content: row.content,
-    score: Number(Math.min(1, Number(row.rank) * 4 || 0.5).toFixed(2)),
-  }));
+  const result = await query(
+    `SELECT id, clause_ref, content, 0.5::float AS rank
+     FROM rulebook_chunks
+     WHERE rulebook_id = $1 AND (content ILIKE $2 OR coalesce(clause_ref, '') ILIKE $2)
+     ORDER BY created_at ASC
+     LIMIT $3`,
+    [rulebookId, like, cap],
+  );
+  return mapChunkRows(result.rows);
+}
+
+export async function retrieveChunks(rulebookId, q, limit = 8) {
+  const cap = Math.min(20, Math.max(1, Number(limit) || 8));
+  const original = String(q || '').trim();
+  if (!original) return [];
+
+  if (await embeddingsEnabled()) {
+    const vec = await ai.embedQuery(wiringSearchBoost(original));
+    const result = await query(
+      `SELECT id, clause_ref, content,
+              GREATEST(0, LEAST(1, 1 - (embedding <=> $1::vector))) AS score
+       FROM rulebook_chunks
+       WHERE rulebook_id = $2 AND embedding IS NOT NULL
+       ORDER BY embedding <=> $1::vector
+       LIMIT $3`,
+      [vec, rulebookId, cap],
+    );
+    if (result.rows.length) return preferWiring(original, mapChunkRows(result.rows, 'score'));
+  }
+
+  let items = await lexicalChunks(rulebookId, original, cap);
+  if (!items.length && WIRING_RE.test(original)) {
+    const result = await query(
+      `SELECT id, clause_ref, content, 0.8::float AS rank
+       FROM rulebook_chunks
+       WHERE rulebook_id = $1
+         AND (
+           content ILIKE '%conductor%'
+           OR content ILIKE '%wiring%'
+           OR content ILIKE '%insulation%'
+           OR coalesce(clause_ref, '') ILIKE '%3.3%'
+           OR coalesce(clause_ref, '') ILIKE '%3.7%'
+         )
+       ORDER BY created_at ASC
+       LIMIT $2`,
+      [rulebookId, cap],
+    );
+    items = mapChunkRows(result.rows);
+  }
+  return preferWiring(original, items);
 }
 
 export async function searchChunks(user, rulebookId, q, limit = 8) {

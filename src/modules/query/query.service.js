@@ -2,6 +2,7 @@ import { env } from '../../config/env.js';
 import { AppError } from '../../lib/AppError.js';
 import { query } from '../../db/query.js';
 import { retrieveChunks } from '../rulebooks/rulebooks.service.js';
+import { WIRING_RE } from '../../lib/wiring.js';
 
 function clip(text, n = 280) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
@@ -54,7 +55,7 @@ export async function chat(user, { rulebookId, message }) {
   if (!book.rows[0]) throw new AppError('Rulebook not found', 404, 'NOT_FOUND');
 
   let chunks = await retrieveChunks(rulebookId, message, 6);
-  if (!chunks.length) {
+  if (!chunks.length && !WIRING_RE.test(message)) {
     const fallback = await query(
       `SELECT id, clause_ref AS "clauseRef", content FROM rulebook_chunks WHERE rulebook_id = $1 ORDER BY created_at ASC LIMIT 4`,
       [rulebookId],

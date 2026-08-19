@@ -18,6 +18,14 @@ export const localDriver = {
     return fs.readFile(path.join(rootDir(), key));
   },
 
+  async remove(key) {
+    try {
+      await fs.unlink(path.join(rootDir(), key));
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  },
+
   async getSignedUrl() {
     return null;
   },

@@ -69,4 +69,10 @@ export const cloudinaryDriver = {
       expires_at: expiresAt,
     });
   },
+
+  async remove(storageKey) {
+    ensureConfig();
+    const { resourceType, publicId } = parseKey(storageKey);
+    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
+  },
 };

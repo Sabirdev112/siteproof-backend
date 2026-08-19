@@ -11,6 +11,13 @@ export const rulebookIdSchema = z.object({
   params: z.object({ id: z.string().uuid() }),
 });
 
+export const documentIdSchema = z.object({
+  params: z.object({
+    id: z.string().uuid(),
+    documentId: z.string().uuid(),
+  }),
+});
+
 export const searchRulebookSchema = z.object({
   params: z.object({ id: z.string().uuid() }),
   query: z

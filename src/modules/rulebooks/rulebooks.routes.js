@@ -6,6 +6,7 @@ import { singleFileUpload } from '../../lib/upload.js';
 import { PDF_MAX_BYTES } from '../../lib/mediaTypes.js';
 import {
   createRulebookSchema,
+  documentIdSchema,
   rulebookIdSchema,
   searchRulebookSchema,
 } from './rulebooks.schema.js';
@@ -30,7 +31,7 @@ rulebooksRouter.get(
 );
 rulebooksRouter.get(
   '/:id/search',
-  authorize('rulebooks:write'),
+  authorize('rulebooks:read'),
   validate(searchRulebookSchema),
   asyncHandler(rulebooksController.search),
 );
@@ -40,6 +41,12 @@ rulebooksRouter.post(
   validate(rulebookIdSchema),
   pdfUpload,
   asyncHandler(rulebooksController.upload),
+);
+rulebooksRouter.delete(
+  '/:id/documents/:documentId',
+  authorize('rulebooks:write'),
+  validate(documentIdSchema),
+  asyncHandler(rulebooksController.removeDocument),
 );
 rulebooksRouter.get(
   '/:id',
