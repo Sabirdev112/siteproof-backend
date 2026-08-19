@@ -2,6 +2,7 @@ import { query, withTransaction } from '../../db/query.js';
 import { AppError } from '../../lib/AppError.js';
 import { findIdempotentResponse, saveIdempotentResponse } from '../../lib/idempotency.js';
 import { jobSummary } from '../../lib/serialize.js';
+import { urlsForMediaIds } from '../media/media.service.js';
 
 const canReadAll = (role) => role === 'supervisor' || role === 'owner';
 
@@ -140,7 +141,7 @@ export async function listJobs(user, queryParams, pagination) {
   };
 }
 
-export async function getJob(user, id) {
+export async function getJob(user, id, baseUrl = '') {
   const vis = visibilityWhere(user);
   const params = [...vis.params, id];
   const result = await query(
@@ -168,11 +169,12 @@ export async function getJob(user, id) {
   );
 
   const reportRow = report.rows[0];
-  return {
-    ...jobSummary(row),
-    findings: findings.rows.map((finding) => ({
+  const findingsOut = [];
+  for (const finding of findings.rows) {
+    findingsOut.push({
       id: finding.id,
       mediaIds: finding.media_ids ?? [],
+      photoUrls: await urlsForMediaIds(user.org_id, finding.media_ids ?? [], baseUrl),
       transcript: finding.transcript,
       attributes: finding.attributes ?? {},
       verdict: finding.verdict,
@@ -180,7 +182,11 @@ export async function getJob(user, id) {
       citedClause: finding.cited_clause,
       reason: finding.reason,
       createdAt: finding.created_at,
-    })),
+    });
+  }
+  return {
+    ...jobSummary(row),
+    findings: findingsOut,
     report: reportRow
       ? {
           id: reportRow.id,

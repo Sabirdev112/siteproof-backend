@@ -26,4 +26,6 @@ export const PERMISSIONS = Object.freeze({
   'settings:write': ['owner'],
 });
 
-export const API_PHASE = 2;
+export const API_PHASE = 4;
+export const EMBEDDING_DIM = 1536;
+export const PDF_MAX_BYTES = 25 * 1024 * 1024;

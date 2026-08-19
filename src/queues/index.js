@@ -1,10 +1,17 @@
+import { logger } from '../lib/logger.js';
 import { notImplemented } from '../lib/AppError.js';
 
-/** In-process queue now; swap to BullMQ + Redis when traffic needs it. */
 export const queues = {
   ingestion: {
-    async add() {
-      throw notImplemented('Rulebook ingestion queue (Phase 4)');
+    async add({ documentId }) {
+      setImmediate(async () => {
+        try {
+          const { ingestDocument } = await import('../modules/rulebooks/rulebooks.ingest.js');
+          await ingestDocument(documentId);
+        } catch (err) {
+          logger.error({ err, documentId }, 'rulebook ingest failed');
+        }
+      });
     },
   },
   extraction: {

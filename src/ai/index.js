@@ -1,9 +1,9 @@
 import { notImplemented } from '../lib/AppError.js';
+import { embedTexts, embedQuery } from './embed.js';
 
 export const ai = {
-  async embed() {
-    throw notImplemented('Embeddings (Phase 4)');
-  },
+  embed: embedTexts,
+  embedQuery,
   async transcribe() {
     throw notImplemented('Speech-to-text (Phase 5)');
   },

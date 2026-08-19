@@ -1,5 +1,6 @@
 import { created, ok, paginated, parsePagination } from '../../lib/http.js';
 import * as jobsService from './jobs.service.js';
+import { requestBaseUrl } from '../media/media.service.js';
 
 export async function create(req, res) {
   const result = await jobsService.createJob(req.user, req.body, {
@@ -17,5 +18,5 @@ export async function list(req, res) {
 }
 
 export async function getById(req, res) {
-  return ok(res, await jobsService.getJob(req.user, req.params.id));
+  return ok(res, await jobsService.getJob(req.user, req.params.id, requestBaseUrl(req)));
 }

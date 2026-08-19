@@ -6,6 +6,7 @@ import { authRouter } from './auth/auth.routes.js';
 import { orgsRouter } from './orgs/orgs.routes.js';
 import { rulebooksRouter } from './rulebooks/rulebooks.routes.js';
 import { mediaRouter } from './media/media.routes.js';
+import * as mediaController from './media/media.controller.js';
 import { extractionRouter } from './extraction/extraction.routes.js';
 import { complianceRouter } from './compliance/compliance.routes.js';
 import { jobsRouter } from './jobs/jobs.routes.js';
@@ -22,6 +23,7 @@ export const api = Router();
 api.use('/health', healthRouter);
 api.use('/auth', authRouter);
 api.use('/webhooks/n8n', n8nWebhooksRouter);
+api.get('/media/:id/file', asyncHandler(mediaController.file));
 
 api.use(authenticate);
 api.get('/me', asyncHandler(authController.me));

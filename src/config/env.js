@@ -31,14 +31,25 @@ const schema = z.object({
   WEBHOOK_SECRET: z.string().min(16),
   N8N_API_KEY: z.string().min(16),
 
-  STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  STORAGE_DRIVER: z.enum(['local', 'cloudinary']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('uploads'),
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+  CLOUDINARY_FOLDER: z.string().default('siteproof'),
+  MEDIA_SIGN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  PUBLIC_API_URL: z.union([z.string().url(), z.literal('')]).optional(),
 
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   SKIP_PGVECTOR: z
     .string()
     .optional()
     .transform((value) => value === 'true' || value === '1'),
+  OPENAI_API_KEY: z
+    .string()
+    .optional()
+    .transform((value) => (value?.trim() ? value.trim() : undefined)),
+  EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
 });
 
 const parsed = schema.safeParse(process.env);
