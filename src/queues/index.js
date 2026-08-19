@@ -14,12 +14,14 @@ export const queues = {
       });
     },
   },
+
   extraction: {
     async add(payload) {
       const { extractFinding } = await import('../modules/extraction/extraction.service.js');
       return extractFinding(payload.user, payload.body);
     },
   },
+  
   outbox: {
     async add() {
       throw notImplemented('Webhook outbox dispatcher (Phase 7)');

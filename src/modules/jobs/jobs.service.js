@@ -223,3 +223,53 @@ export async function getJob(user, id, baseUrl = '') {
     })),
   };
 }
+
+export async function createFinding(user, jobId, body, { idempotencyKey, method, path } = {}) {
+  if (!idempotencyKey) throw new AppError('Idempotency-Key is required', 400, 'VALIDATION_ERROR');
+
+  const replay = await findIdempotentResponse(user.id, idempotencyKey);
+  if (replay) return { replay: true, status: replay.response_status, data: replay.response_body.data };
+
+  const job = await getAccessibleJobRow(user, jobId);
+  if (job.status === 'closed') throw new AppError('Job already closed', 409, 'CONFLICT');
+
+  const ids = [...body.mediaIds];
+  if (body.audioId) ids.push(body.audioId);
+  const media = await query(
+    `SELECT id FROM media WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+    [user.org_id, ids],
+  );
+  if (media.rows.length !== ids.length) {
+    throw new AppError('Media not found for this org', 422, 'UNPROCESSABLE');
+  }
+
+  return withTransaction(async (client) => {
+    const inserted = await client.query(
+      `INSERT INTO findings (
+         job_id, media_ids, transcript, attributes, verdict, severity, cited_clause, reason
+       )
+       VALUES ($1, $2::uuid[], $3, $4::jsonb, $5, $6, $7::jsonb, $8)
+       RETURNING id, verdict, severity`,
+      [
+        jobId,
+        body.mediaIds,
+        body.transcript || '',
+        JSON.stringify(body.attributes || {}),
+        body.verdict,
+        body.severity,
+        JSON.stringify(body.citedClause),
+        body.reason,
+      ],
+    );
+    const data = inserted.rows[0];
+    await saveIdempotentResponse(client, {
+      userId: user.id,
+      key: idempotencyKey,
+      method,
+      path,
+      status: 201,
+      body: { success: true, data },
+    });
+    return { replay: false, status: 201, data };
+  });
+}

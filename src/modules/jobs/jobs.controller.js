@@ -20,3 +20,12 @@ export async function list(req, res) {
 export async function getById(req, res) {
   return ok(res, await jobsService.getJob(req.user, req.params.id, requestBaseUrl(req)));
 }
+
+export async function addFinding(req, res) {
+  const result = await jobsService.createFinding(req.user, req.params.id, req.body, {
+    idempotencyKey: req.header('idempotency-key') || undefined,
+    method: req.method,
+    path: req.originalUrl.split('?')[0],
+  });
+  return result.status === 201 ? created(res, result.data) : ok(res, result.data, result.status);
+}

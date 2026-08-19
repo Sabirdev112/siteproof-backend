@@ -107,8 +107,7 @@ export async function addDocument(user, rulebookId, file) {
   return { id: doc.id, filename: doc.filename, status: 'processing', error: null };
 }
 
-export async function searchChunks(user, rulebookId, q, limit = 8) {
-  await getOwned(user.org_id, rulebookId);
+export async function retrieveChunks(rulebookId, q, limit = 8) {
   const cap = Math.min(20, Math.max(1, Number(limit) || 8));
 
   if (await embeddingsEnabled()) {
@@ -123,14 +122,12 @@ export async function searchChunks(user, rulebookId, q, limit = 8) {
       [vec, rulebookId, cap],
     );
     if (result.rows.length) {
-      return {
-        items: result.rows.map((row) => ({
-          id: row.id,
-          clauseRef: row.clause_ref,
-          content: row.content,
-          score: Number(Number(row.score).toFixed(2)),
-        })),
-      };
+      return result.rows.map((row) => ({
+        id: row.id,
+        clauseRef: row.clause_ref,
+        content: row.content,
+        score: Number(Number(row.score).toFixed(2)),
+      }));
     }
   }
 
@@ -165,14 +162,17 @@ export async function searchChunks(user, rulebookId, q, limit = 8) {
     );
   }
 
-  return {
-    items: result.rows.map((row) => ({
-      id: row.id,
-      clauseRef: row.clause_ref,
-      content: row.content,
-      score: Number(Math.min(1, Number(row.rank) * 4 || 0.5).toFixed(2)),
-    })),
-  };
+  return result.rows.map((row) => ({
+    id: row.id,
+    clauseRef: row.clause_ref,
+    content: row.content,
+    score: Number(Math.min(1, Number(row.rank) * 4 || 0.5).toFixed(2)),
+  }));
+}
+
+export async function searchChunks(user, rulebookId, q, limit = 8) {
+  await getOwned(user.org_id, rulebookId);
+  return { items: await retrieveChunks(rulebookId, q, limit) };
 }
 
 /** Used by seed: create or reuse titled rulebook and ingest a PDF buffer. */

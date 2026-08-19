@@ -4,7 +4,7 @@ import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { authorize } from '../../middleware/auth.js';
 import { notImplemented } from '../../lib/AppError.js';
-import { createJobSchema, jobIdSchema, listJobsSchema } from './jobs.schema.js';
+import { createJobSchema, jobIdSchema, listJobsSchema, createFindingSchema } from './jobs.schema.js';
 import * as jobsController from './jobs.controller.js';
 import * as jobsService from './jobs.service.js';
 
@@ -38,9 +38,8 @@ jobsRouter.post(
 jobsRouter.post(
   '/:id/findings',
   authorize('jobs:create'),
-  asyncHandler(async () => {
-    throw notImplemented('POST /jobs/:id/findings (Phase 6)');
-  }),
+  validate(createFindingSchema),
+  asyncHandler(jobsController.addFinding),
 );
 jobsRouter.get(
   '/:id/actions',
