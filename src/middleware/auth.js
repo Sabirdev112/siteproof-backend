@@ -7,6 +7,15 @@ import { safeEqual } from '../lib/crypto.js';
 
 export async function authenticate(req, _res, next) {
   try {
+    const apiKey = req.header('x-api-key') || '';
+    if (apiKey) {
+      if (!safeEqual(apiKey, env.N8N_API_KEY)) {
+        throw new AppError('Invalid API key', 401, 'UNAUTHORIZED');
+      }
+      req.n8n = true;
+      return next();
+    }
+
     const header = req.header('authorization') || '';
     const [scheme, token] = header.split(' ');
     if (scheme !== 'Bearer' || !token) {
@@ -34,6 +43,9 @@ export async function authenticate(req, _res, next) {
 
 export function authorize(permission) {
   return (req, _res, next) => {
+    if (req.n8n) {
+      return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
+    }
     const allowed = PERMISSIONS[permission];
     if (!allowed) {
       return next(new AppError(`Unknown permission ${permission}`, 500, 'CONFIG_ERROR'));
@@ -42,6 +54,13 @@ export function authorize(permission) {
       return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
     }
     next();
+  };
+}
+
+export function authorizeOrN8n(permission) {
+  return (req, res, next) => {
+    if (req.n8n) return next();
+    return authorize(permission)(req, res, next);
   };
 }
 

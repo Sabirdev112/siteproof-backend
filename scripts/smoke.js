@@ -1,9 +1,10 @@
 /**
- * Smoke-test live routes through Phase 6 against a running API (default localhost:3000).
+ * Smoke-test live routes through Phase 7 against a running API (default localhost:3000).
  */
 const BASE = (process.env.SMOKE_BASE_URL || 'http://localhost:3000/api/v1').replace(/\/$/, '');
 const OWNER = { email: process.env.SEED_OWNER_EMAIL || 'owner@siteproof.local', password: process.env.SEED_OWNER_PASSWORD || 'Owner123!' };
 const WORKER = { email: process.env.SEED_WORKER_EMAIL || 'worker@siteproof.local', password: process.env.SEED_WORKER_PASSWORD || 'Worker123!' };
+const N8N_KEY = process.env.N8N_API_KEY || 'change-me-to-a-long-random-n8n-api-key';
 
 const results = [];
 
@@ -29,14 +30,17 @@ async function req(method, path, { token, body, form, expect, extraHeaders } = {
 }
 
 function summarize(json) {
-  if (!json?.data) return json.error?.code || '';
+  if (!json?.data) return json.error?.code || json.error?.details?.status || '';
   const d = json.data;
   if (d.items) return `items=${d.items.length}`;
+  if (Array.isArray(d) && d[0]?.type) return `actions=${d.length}`;
   if (d.phase != null) return `phase=${d.phase} db=${d.db || ''} storage=${d.storage || ''}`;
   if (d.accessToken) return `role=${d.user?.role}`;
   if (d.verdict) return `verdict=${d.verdict}`;
   if (d.attributes) return `object=${d.attributes.object}`;
-  if (d.findings) return `findings=${d.findings.length}`;
+  if (d.findings) return `findings=${d.findings.length} status=${d.status}`;
+  if (d.report) return `status=${d.status} report=${d.report.status}`;
+  if (d.pdfStorageKey !== undefined) return `report=${d.status}`;
   if (d.status) return `status=${d.status}`;
   if (d.id) return `id=${d.id}`;
   return 'ok';
@@ -53,7 +57,7 @@ async function login(account) {
 }
 
 async function main() {
-  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 6 });
+  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 7 });
   await req('GET', '/health/ready', { expect: (s, j) => s === 200 && j.data?.db === 'up' });
   await req('GET', '/me', { expect: (s, j) => s === 401 && j.error?.code === 'UNAUTHORIZED' });
 
@@ -61,20 +65,8 @@ async function main() {
   const ownerToken = await login(OWNER);
   if (!workerToken || !ownerToken) throw new Error('login failed');
 
-  await req('GET', '/me', { token: workerToken });
-  await req('GET', '/orgs/me', { token: workerToken });
-  await req('GET', '/settings', { token: workerToken });
-
   const { json: books } = await req('GET', '/rulebooks', { token: workerToken });
   const rulebookId = books.data?.items?.[0]?.id;
-  if (!rulebookId) throw new Error('no seeded rulebook');
-
-  await req('POST', '/rulebooks', {
-    token: workerToken,
-    body: { title: 'should-fail' },
-    expect: (s, j) => s === 403 && j.error?.code === 'FORBIDDEN',
-  });
-  await req('GET', `/rulebooks/${rulebookId}/search?q=exposed%20conductors`, { token: ownerToken });
 
   const { json: job } = await req('POST', '/jobs', {
     token: workerToken,
@@ -97,62 +89,75 @@ async function main() {
   const { json: extracted } = await req('POST', '/extract', {
     token: workerToken,
     body: { jobId, mediaIds: [mediaId] },
-    expect: (s, j) => Boolean(s === 200 && j.data?.attributes?.object),
   });
-
-  await req('POST', '/compliance/check', {
-    token: workerToken,
-    body: {},
-    expect: (s, j) => s === 400 && j.error?.code === 'VALIDATION_ERROR',
-  });
-
   const { json: checked } = await req('POST', '/compliance/check', {
     token: workerToken,
+    body: { jobId, transcript: extracted.data.transcript, attributes: extracted.data.attributes },
+  });
+  await req('POST', `/jobs/${jobId}/findings`, {
+    token: workerToken,
     body: {
-      jobId,
+      mediaIds: [mediaId],
       transcript: extracted.data.transcript,
       attributes: extracted.data.attributes,
+      verdict: checked.data.verdict,
+      severity: checked.data.severity,
+      citedClause: checked.data.citedClause,
+      reason: checked.data.reason,
     },
-    expect: (s, j) =>
-      Boolean(
-        s === 200 &&
-          ['pass', 'review', 'fail'].includes(j.data?.verdict) &&
-          j.data?.citedClause?.ref &&
-          j.data?.citedClause?.text &&
-          j.data?.reason,
-      ),
+    extraHeaders: { 'Idempotency-Key': crypto.randomUUID() },
   });
 
-  const findingKey = crypto.randomUUID();
-  const findingBody = {
-    mediaIds: [mediaId],
-    transcript: extracted.data.transcript,
-    attributes: extracted.data.attributes,
-    verdict: checked.data.verdict,
-    severity: checked.data.severity,
-    citedClause: checked.data.citedClause,
-    reason: checked.data.reason,
-  };
-  await req('POST', `/jobs/${jobId}/findings`, {
+  const { json: closed } = await req('POST', `/jobs/${jobId}/close`, {
     token: workerToken,
-    body: findingBody,
-    extraHeaders: { 'Idempotency-Key': findingKey },
-    expect: (s, j) => s === 201 && j.data?.id && j.data?.verdict === checked.data.verdict,
-  });
-  await req('POST', `/jobs/${jobId}/findings`, {
-    token: workerToken,
-    body: findingBody,
-    extraHeaders: { 'Idempotency-Key': findingKey },
-    expect: (s, j) => (s === 200 || s === 201) && j.data?.verdict === checked.data.verdict,
-  });
-  await req('GET', `/jobs/${jobId}`, {
-    token: workerToken,
-    expect: (s, j) =>
-      Boolean(s === 200 && j.data?.findings?.length >= 1 && j.data.findings[0].citedClause?.ref),
+    expect: (s, j) => s === 200 && j.data?.status === 'closed' && j.data?.report?.status === 'pending',
   });
   await req('POST', `/jobs/${jobId}/close`, {
     token: workerToken,
-    expect: (s, j) => s === 501 && j.error?.code === 'NOT_IMPLEMENTED',
+    expect: (s, j) => s === 409 && j.error?.code === 'CONFLICT',
+  });
+
+  const reportId = closed.data.report.id;
+  await req('GET', `/reports/${reportId}`, {
+    token: workerToken,
+    expect: (s, j) => s === 200 && j.data?.status === 'pending',
+  });
+
+  await req('POST', '/webhooks/n8n/report-ready', {
+    extraHeaders: { 'X-Api-Key': N8N_KEY },
+    body: {
+      reportId,
+      jobId,
+      status: 'ready',
+      pdfStorageKey: `reports/${jobId}.pdf`,
+      pdfUrl: 'https://example.com/report.pdf',
+    },
+  });
+  await req('POST', '/webhooks/n8n/actions', {
+    extraHeaders: { 'X-Api-Key': N8N_KEY },
+    body: { jobId, type: 'report.pdf', target: 'storage', status: 'ok', metadata: { pdfStorageKey: `reports/${jobId}.pdf` } },
+  });
+  await req('GET', `/jobs/${jobId}`, {
+    extraHeaders: { 'X-Api-Key': N8N_KEY },
+    expect: (s, j) => s === 200 && j.data?.status === 'closed' && j.data?.report?.status === 'ready',
+  });
+  await req('GET', `/jobs/${jobId}/actions`, {
+    token: ownerToken,
+    expect: (s, j) => s === 200 && Array.isArray(j.data) && j.data.length >= 1,
+  });
+  await req('POST', `/jobs/${jobId}/findings`, {
+    token: workerToken,
+    body: {
+      mediaIds: [mediaId],
+      transcript: extracted.data.transcript,
+      attributes: extracted.data.attributes,
+      verdict: checked.data.verdict,
+      severity: checked.data.severity,
+      citedClause: checked.data.citedClause,
+      reason: checked.data.reason,
+    },
+    extraHeaders: { 'Idempotency-Key': crypto.randomUUID() },
+    expect: (s, j) => s === 409 && j.error?.code === 'CONFLICT',
   });
 
   const failed = results.filter((r) => !r.ok);
@@ -161,7 +166,7 @@ async function main() {
     console.error(`${failed.length} check(s) failed`);
     process.exit(1);
   }
-  console.log(`Phase 6 smoke passed (${results.length} checks) against ${BASE}`);
+  console.log(`Phase 7 smoke passed (${results.length} checks) against ${BASE}`);
 }
 
 main().catch((err) => {

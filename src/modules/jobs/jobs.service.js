@@ -1,8 +1,11 @@
 import { query, withTransaction } from '../../db/query.js';
 import { AppError } from '../../lib/AppError.js';
 import { findIdempotentResponse, saveIdempotentResponse } from '../../lib/idempotency.js';
-import { jobSummary } from '../../lib/serialize.js';
+import { jobSummary, serializeReport } from '../../lib/serialize.js';
 import { urlsForMediaIds } from '../media/media.service.js';
+import { queues } from '../../queues/index.js';
+import { enqueue } from '../../events/outbox.js';
+import { buildJobClosedPayload, newOutboxId } from '../../events/payload.js';
 
 const canReadAll = (role) => role === 'supervisor' || role === 'owner';
 
@@ -59,7 +62,7 @@ export async function getAccessibleJobRow(user, jobId) {
 
 const SUMMARY_SELECT = `
   SELECT
-    j.id, j.site, j.job_type, j.rulebook_id, j.status, j.created_at, j.closed_at,
+    j.id, j.org_id, j.site, j.job_type, j.rulebook_id, j.status, j.created_at, j.closed_at,
     j.worker_id, u.name AS worker_name,
     COUNT(f.id)::int AS finding_count,
     COUNT(f.id) FILTER (WHERE f.verdict = 'pass')::int AS pass_count,
@@ -159,16 +162,22 @@ export async function listJobs(user, queryParams, pagination) {
   };
 }
 
-export async function getJob(user, id, baseUrl = '') {
-  const vis = visibilityWhere(user);
-  const params = [...vis.params, id];
-  const result = await query(
-    `${SUMMARY_SELECT}
-     WHERE ${vis.sql} AND j.id = $${params.length}
-     GROUP BY j.id, u.id`,
-    params,
-  );
-  const row = result.rows[0];
+export async function getJob(user, id, baseUrl = '', { n8n } = {}) {
+  let row;
+  if (n8n) {
+    const result = await query(`${SUMMARY_SELECT} WHERE j.id = $1 GROUP BY j.id, u.id`, [id]);
+    row = result.rows[0];
+  } else {
+    const vis = visibilityWhere(user);
+    const params = [...vis.params, id];
+    const result = await query(
+      `${SUMMARY_SELECT}
+       WHERE ${vis.sql} AND j.id = $${params.length}
+       GROUP BY j.id, u.id`,
+      params,
+    );
+    row = result.rows[0];
+  }
   if (!row) throw new AppError('Job not found', 404, 'NOT_FOUND');
 
   const findings = await query(
@@ -177,7 +186,7 @@ export async function getJob(user, id, baseUrl = '') {
     [id],
   );
   const report = await query(
-    `SELECT id, status, pdf_storage_key FROM reports WHERE job_id = $1`,
+    `SELECT id, job_id, status, pdf_storage_key FROM reports WHERE job_id = $1`,
     [id],
   );
   const actions = await query(
@@ -192,7 +201,7 @@ export async function getJob(user, id, baseUrl = '') {
     findingsOut.push({
       id: finding.id,
       mediaIds: finding.media_ids ?? [],
-      photoUrls: await urlsForMediaIds(user.org_id, finding.media_ids ?? [], baseUrl),
+      photoUrls: await urlsForMediaIds(user?.org_id || row.org_id, finding.media_ids ?? [], baseUrl),
       transcript: finding.transcript,
       attributes: finding.attributes ?? {},
       verdict: finding.verdict,
@@ -205,14 +214,7 @@ export async function getJob(user, id, baseUrl = '') {
   return {
     ...jobSummary(row),
     findings: findingsOut,
-    report: reportRow
-      ? {
-          id: reportRow.id,
-          status: reportRow.status,
-          pdfUrl: null,
-          pdfStorageKey: reportRow.pdf_storage_key,
-        }
-      : null,
+    report: serializeReport(reportRow),
     actions: actions.rows.map((action) => ({
       id: action.id,
       type: action.type,
@@ -272,4 +274,87 @@ export async function createFinding(user, jobId, body, { idempotencyKey, method,
     });
     return { replay: false, status: 201, data };
   });
+}
+
+function closeSummary(job, report, counts) {
+  return {
+    id: job.id,
+    status: job.status,
+    closedAt: job.closed_at,
+    report: { id: report?.id ?? null, status: report?.status ?? null },
+    counts,
+  };
+}
+
+export async function closeJob(user, jobId) {
+  const job = await getAccessibleJobRow(user, jobId);
+
+  const countsFor = async (clientOrNull) => {
+    const q = clientOrNull ? clientOrNull.query.bind(clientOrNull) : query;
+    const countsRes = await q(
+      `SELECT
+         COUNT(*) FILTER (WHERE verdict = 'pass')::int AS pass,
+         COUNT(*) FILTER (WHERE verdict = 'review')::int AS review,
+         COUNT(*) FILTER (WHERE verdict = 'fail')::int AS fail
+       FROM findings WHERE job_id = $1`,
+      [jobId],
+    );
+    return {
+      pass: countsRes.rows[0].pass,
+      review: countsRes.rows[0].review,
+      fail: countsRes.rows[0].fail,
+    };
+  };
+
+  if (job.status === 'closed') {
+    const report = await query(`SELECT id, job_id, status FROM reports WHERE job_id = $1`, [jobId]);
+    throw new AppError('Job already closed', 409, 'CONFLICT', closeSummary(job, report.rows[0], await countsFor()));
+  }
+
+  const closed = await withTransaction(async (client) => {
+    const updated = await client.query(
+      `UPDATE jobs SET status = 'closed', closed_at = now()
+       WHERE id = $1 AND org_id = $2 AND status = 'open'
+       RETURNING *`,
+      [jobId, user.org_id],
+    );
+    if (!updated.rows[0]) {
+      throw new AppError('Job already closed', 409, 'CONFLICT');
+    }
+    const closedJob = updated.rows[0];
+
+    const report = await client.query(
+      `INSERT INTO reports (job_id, status) VALUES ($1, 'pending')
+       ON CONFLICT (job_id) DO UPDATE SET job_id = EXCLUDED.job_id
+       RETURNING id, job_id, status, pdf_storage_key`,
+      [jobId],
+    );
+
+    await client.query(
+      `INSERT INTO issues (org_id, job_id, finding_id)
+       SELECT $1, $2, f.id
+       FROM findings f
+       WHERE f.job_id = $2 AND f.verdict IN ('review', 'fail')
+         AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.finding_id = f.id)`,
+      [user.org_id, jobId],
+    );
+
+    const counts = await countsFor(client);
+    const deliveryId = newOutboxId();
+    const payload = await buildJobClosedPayload(jobId, deliveryId, client);
+    payload.job.closedAt = closedJob.closed_at;
+    payload.occurredAt =
+      closedJob.closed_at instanceof Date ? closedJob.closed_at.toISOString() : payload.occurredAt;
+    await enqueue(client, {
+      id: deliveryId,
+      eventType: 'job.closed',
+      aggregateId: jobId,
+      payload,
+    });
+
+    return closeSummary(closedJob, report.rows[0], counts);
+  });
+
+  await queues.outbox.add();
+  return closed;
 }

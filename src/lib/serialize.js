@@ -42,3 +42,22 @@ export function jobSummary(row) {
     },
   };
 }
+
+export function headlineFromCounts(counts) {
+  if (counts.fail) return 'fail';
+  if (counts.review) return 'review';
+  if (counts.pass) return 'pass';
+  return 'open';
+}
+
+export function serializeReport(row) {
+  if (!row) return null;
+  const key = row.pdf_storage_key || null;
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    status: row.status,
+    pdfStorageKey: key,
+    pdfUrl: key && String(key).startsWith('http') ? key : null,
+  };
+}

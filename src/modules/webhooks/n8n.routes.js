@@ -1,15 +1,15 @@
 import { Router } from 'express';
+import { asyncHandler } from '../../lib/asyncHandler.js';
 import { authenticateN8n } from '../../middleware/auth.js';
-import { stubRouter } from '../createStubRouter.js';
+import { validate } from '../../middleware/validate.js';
+import { reportReadySchema, n8nActionSchema } from './n8n.schema.js';
+import * as n8nController from './n8n.controller.js';
 
 export const n8nWebhooksRouter = Router();
 n8nWebhooksRouter.use(authenticateN8n);
-n8nWebhooksRouter.use(
-  stubRouter(
-    [
-      ['post', '/report-ready'],
-      ['post', '/actions'],
-    ],
-    'Phase 7',
-  ),
+n8nWebhooksRouter.post(
+  '/report-ready',
+  validate(reportReadySchema),
+  asyncHandler(n8nController.reportReady),
 );
+n8nWebhooksRouter.post('/actions', validate(n8nActionSchema), asyncHandler(n8nController.actions));

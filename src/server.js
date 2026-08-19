@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { pool } from './db/pool.js';
 import { migrate } from './db/migrate.js';
+import { startOutboxLoop } from './events/outbox.js';
 
 const app = createApp();
 
@@ -13,6 +14,7 @@ async function start() {
 
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT, env: env.NODE_ENV }, 'siteproof api listening');
+    startOutboxLoop();
   });
 
   const shutdown = async (signal) => {

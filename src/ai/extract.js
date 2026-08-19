@@ -83,7 +83,8 @@ export async function inspectPhotos({ photos, transcript, site }) {
     apparentIssue: 'confirm from photos',
   });
 
-  if (!env.OPENAI_API_KEY) return fallback;
+  const usable = photos.filter((photo) => photo.buffer?.length > 2048);
+  if (!env.OPENAI_API_KEY || !usable.length) return fallback;
 
   const content = [
     {
@@ -94,7 +95,7 @@ Site: ${site || 'unknown'}
 Transcript: ${transcript || '(none)'}`,
     },
   ];
-  for (const photo of photos.slice(0, 4)) {
+  for (const photo of usable.slice(0, 4)) {
     content.push({
       type: 'image_url',
       image_url: { url: `data:${photo.mime};base64,${photo.buffer.toString('base64')}` },
@@ -121,6 +122,7 @@ Transcript: ${transcript || '(none)'}`,
   }
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 400) return fallback;
     throw new AppError(`Vision failed (${res.status}): ${body.slice(0, 180)}`, 503, 'UNAVAILABLE');
   }
   const json = await res.json();

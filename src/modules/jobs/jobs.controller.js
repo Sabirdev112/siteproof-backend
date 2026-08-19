@@ -18,7 +18,14 @@ export async function list(req, res) {
 }
 
 export async function getById(req, res) {
-  return ok(res, await jobsService.getJob(req.user, req.params.id, requestBaseUrl(req)));
+  return ok(
+    res,
+    await jobsService.getJob(req.user, req.params.id, requestBaseUrl(req), { n8n: req.n8n }),
+  );
+}
+
+export async function close(req, res) {
+  return ok(res, await jobsService.closeJob(req.user, req.params.id));
 }
 
 export async function addFinding(req, res) {
