@@ -1,6 +1,6 @@
 import { ok } from '../../lib/http.js';
-import * as extractionService from './extraction.service.js';
+import { queues } from '../../queues/index.js';
 
 export async function extract(req, res) {
-  return ok(res, await extractionService.extractFinding(req.user, req.body));
+  return ok(res, await queues.extraction.add({ user: req.user, body: req.body }));
 }

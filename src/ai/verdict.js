@@ -1,6 +1,7 @@
 import { env } from '../config/env.js';
 import { AppError } from '../lib/AppError.js';
 import { VERDICTS, SEVERITIES } from '../config/constants.js';
+import { WIRING_RE, pickCitedClause } from '../lib/wiring.js';
 
 function clip(text, n = 280) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
@@ -15,15 +16,15 @@ function findingBlob({ transcript, attributes }) {
 }
 
 function heuristicVerdict(blob, clauses) {
-  const top = clauses[0];
+  const top = pickCitedClause(blob, clauses) || clauses[0];
   const citedClause = { ref: top.clauseRef || 'SOP', text: clip(top.content) };
   const text = blob.toLowerCase();
-  if (/exposed|bare|unsheath|not enclosed|leak|missing earth|venting|no earth/.test(text)) {
+  if (WIRING_RE.test(text) || /leak|missing earth|venting|no earth/.test(text)) {
     return {
       verdict: 'fail',
       severity: 'high',
       citedClause,
-      reason: clip(`${blob} conflicts with ${citedClause.ref}.`),
+      reason: clip(`Finding conflicts with ${citedClause.ref}: ${citedClause.text}`),
     };
   }
   if (/needs confirmation|incomplete|unclear|review/.test(text)) {
@@ -86,6 +87,7 @@ export async function decideVerdict({ transcript, attributes, clauses }) {
 Verdict must be pass, review, or fail. Severity low, med, or high.
 Return JSON: verdict, severity, citedClause: { ref, text }, reason.
 Use one cited clause from the list (copy ref and a short quote).
+If the finding is exposed, bare, broken, frayed, or damaged wiring, you must fail it and cite SOP §3.3 (exposed conductors) or SOP §3.7 (damaged wiring). Include the clause text in citedClause.text.
 
 Finding: ${blob}
 

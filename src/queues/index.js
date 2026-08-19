@@ -1,22 +1,23 @@
 import { logger } from '../lib/logger.js';
+import { runLimited } from './limit.js';
 
 export const queues = {
   ingestion: {
     async add({ documentId }) {
-      setImmediate(async () => {
-        try {
+      setImmediate(() => {
+        runLimited(async () => {
           const { ingestDocument } = await import('../modules/rulebooks/rulebooks.ingest.js');
           await ingestDocument(documentId);
-        } catch (err) {
-          logger.error({ err, documentId }, 'rulebook ingest failed');
-        }
+        }).catch((err) => logger.error({ err, documentId }, 'rulebook ingest failed'));
       });
     },
   },
   extraction: {
     async add(payload) {
-      const { extractFinding } = await import('../modules/extraction/extraction.service.js');
-      return extractFinding(payload.user, payload.body);
+      return runLimited(async () => {
+        const { extractFinding } = await import('../modules/extraction/extraction.service.js');
+        return extractFinding(payload.user, payload.body);
+      });
     },
   },
   outbox: {

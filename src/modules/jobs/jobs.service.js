@@ -67,10 +67,12 @@ const SUMMARY_SELECT = `
     COUNT(f.id)::int AS finding_count,
     COUNT(f.id) FILTER (WHERE f.verdict = 'pass')::int AS pass_count,
     COUNT(f.id) FILTER (WHERE f.verdict = 'review')::int AS review_count,
-    COUNT(f.id) FILTER (WHERE f.verdict = 'fail')::int AS fail_count
+    COUNT(f.id) FILTER (WHERE f.verdict = 'fail')::int AS fail_count,
+    rep.id AS report_id, rep.job_id AS report_job_id, rep.status AS report_status, rep.pdf_storage_key
   FROM jobs j
   JOIN users u ON u.id = j.worker_id
   LEFT JOIN findings f ON f.job_id = j.id
+  LEFT JOIN reports rep ON rep.job_id = j.id
 `;
 
 export async function createJob(user, body, { idempotencyKey, method, path } = {}) {
@@ -132,7 +134,9 @@ export async function listJobs(user, queryParams, pagination) {
   }
   if (queryParams.q) {
     params.push(`%${queryParams.q}%`);
-    where.push(`(j.site ILIKE $${params.length} OR COALESCE(j.job_type, '') ILIKE $${params.length})`);
+    where.push(
+      `(j.site ILIKE $${params.length} OR COALESCE(j.job_type, '') ILIKE $${params.length} OR u.name ILIKE $${params.length})`,
+    );
   }
   if (queryParams.from) {
     params.push(queryParams.from);
@@ -162,6 +166,7 @@ export async function listJobs(user, queryParams, pagination) {
         `SELECT COUNT(*)::int AS total FROM (
            SELECT j.id
            FROM jobs j
+           JOIN users u ON u.id = j.worker_id
            LEFT JOIN findings f ON f.job_id = j.id
            WHERE ${whereSql}
            GROUP BY j.id
@@ -169,13 +174,16 @@ export async function listJobs(user, queryParams, pagination) {
          ) counted`,
         params,
       )
-    : await query(`SELECT COUNT(*)::int AS total FROM jobs j WHERE ${whereSql}`, params);
+    : await query(
+        `SELECT COUNT(*)::int AS total FROM jobs j JOIN users u ON u.id = j.worker_id WHERE ${whereSql}`,
+        params,
+      );
 
   params.push(pagination.limit, pagination.offset);
   const rows = await query(
     `${SUMMARY_SELECT}
      WHERE ${whereSql}
-     GROUP BY j.id, u.id
+     GROUP BY j.id, u.id, rep.id
      ${havingSql}
      ORDER BY j.created_at DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -192,7 +200,7 @@ export async function listJobs(user, queryParams, pagination) {
 export async function getJob(user, id, baseUrl = '', { n8n } = {}) {
   let row;
   if (n8n) {
-    const result = await query(`${SUMMARY_SELECT} WHERE j.id = $1 GROUP BY j.id, u.id`, [id]);
+    const result = await query(`${SUMMARY_SELECT} WHERE j.id = $1 GROUP BY j.id, u.id, rep.id`, [id]);
     row = result.rows[0];
   } else {
     const vis = visibilityWhere(user);
@@ -200,7 +208,7 @@ export async function getJob(user, id, baseUrl = '', { n8n } = {}) {
     const result = await query(
       `${SUMMARY_SELECT}
        WHERE ${vis.sql} AND j.id = $${params.length}
-       GROUP BY j.id, u.id`,
+       GROUP BY j.id, u.id, rep.id`,
       params,
     );
     row = result.rows[0];

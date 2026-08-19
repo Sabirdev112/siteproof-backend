@@ -42,6 +42,14 @@ export function jobSummary(row) {
     findingCount: Number(row.finding_count ?? 0),
     headline: headlineFromCounts(counts),
     verdictSummary: counts,
+    report: row.report_id
+      ? serializeReport({
+          id: row.report_id,
+          job_id: row.report_job_id,
+          status: row.report_status,
+          pdf_storage_key: row.pdf_storage_key,
+        })
+      : null,
   };
 }
 

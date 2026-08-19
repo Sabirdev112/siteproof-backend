@@ -110,10 +110,7 @@ async function seedAcSop(orgId) {
      LIMIT 1`,
     [orgId, AC_SOP.title],
   );
-  if (existing.rows[0]?.status === 'ready' && existing.rows[0].chunks > 0) {
-    logger.info({ id: existing.rows[0].id, chunks: existing.rows[0].chunks }, 'ac sop already ingested');
-    return { id: existing.rows[0].id, status: existing.rows[0].status, chunkCount: existing.rows[0].chunks };
-  }
+  logger.info({ id: existing.rows[0]?.id, replacing: Boolean(existing.rows[0]) }, 'ingesting ac sop');
 
   return seedRulebookFromPdf({
     orgId,
@@ -121,6 +118,7 @@ async function seedAcSop(orgId) {
     vertical: AC_SOP.vertical,
     filename: 'ac-sop.pdf',
     buffer: pdf,
+    replace: true,
   });
 }
 

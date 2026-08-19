@@ -9,6 +9,7 @@ export const pool = new Pool({
   max: env.DB_POOL_MAX,
   idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
   connectionTimeoutMillis: env.DB_CONN_TIMEOUT_MS,
+  options: `-c statement_timeout=${env.DB_STATEMENT_TIMEOUT_MS}`,
   ssl: env.DATABASE_URL.includes('localhost') || env.DATABASE_URL.includes('127.0.0.1')
     ? false
     : { rejectUnauthorized: false },

@@ -27,5 +27,5 @@ export const PERMISSIONS = Object.freeze({
   'settings:write': ['owner'],
 });
 
-export const API_PHASE = 8;
+export const API_PHASE = 9;
 export const EMBEDDING_DIM = 1536;

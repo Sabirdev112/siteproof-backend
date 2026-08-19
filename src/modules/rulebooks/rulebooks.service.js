@@ -6,6 +6,7 @@ import { PDF_MIMES, PDF_MAX_BYTES } from '../../lib/mediaTypes.js';
 import { queues } from '../../queues/index.js';
 import { ai } from '../../ai/index.js';
 import { embeddingsEnabled } from '../../lib/pgvector.js';
+import { wiringSearchBoost } from '../../lib/wiring.js';
 
 function serializeRulebook(row) {
   return {
@@ -109,6 +110,7 @@ export async function addDocument(user, rulebookId, file) {
 
 export async function retrieveChunks(rulebookId, q, limit = 8) {
   const cap = Math.min(20, Math.max(1, Number(limit) || 8));
+  q = wiringSearchBoost(q);
 
   if (await embeddingsEnabled()) {
     const vec = await ai.embedQuery(q);
@@ -176,7 +178,7 @@ export async function searchChunks(user, rulebookId, q, limit = 8) {
 }
 
 /** Used by seed: create or reuse titled rulebook and ingest a PDF buffer. */
-export async function seedRulebookFromPdf({ orgId, title, vertical, filename, buffer }) {
+export async function seedRulebookFromPdf({ orgId, title, vertical, filename, buffer, replace = false }) {
   const existing = await query(
     `SELECT id, status FROM rulebooks WHERE org_id = $1 AND title = $2 ORDER BY created_at ASC LIMIT 1`,
     [orgId, title],
@@ -188,6 +190,8 @@ export async function seedRulebookFromPdf({ orgId, title, vertical, filename, bu
       [orgId, title, vertical],
     );
     rulebookId = created.rows[0].id;
+  } else if (replace) {
+    await query(`DELETE FROM rulebook_documents WHERE rulebook_id = $1`, [rulebookId]);
   }
 
   const id = randomUUID();

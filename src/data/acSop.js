@@ -2,7 +2,7 @@
 export const AC_SOP = {
   title: 'Air Conditioner Installation & Service SOP',
   docNo: 'SOP-HVAC-AC-001',
-  revision: '1.0',
+  revision: '1.1',
   vertical: 'hvac',
   sections: [
     {
@@ -66,7 +66,7 @@ export const AC_SOP = {
         {
           ref: '3.3',
           title: 'Exposed conductors',
-          body: 'Conductors must be enclosed in the manufacturer enclosure, conduit, or trunking. Exposed or unsheathed live conductors at the isolator, indoor terminal block, or outdoor electrics are a fail. Temporary tape is not an enclosure.',
+          body: 'Conductors must be enclosed in the manufacturer enclosure, conduit, gland, or trunking. Exposed, bare, unsheathed, or live conductors at the isolator, indoor terminal block, outdoor electrics, or interconnect are a fail. Temporary tape, twisted cores, or a missing cover are not an enclosure. If a photo shows exposed wiring, cite this clause.',
         },
         {
           ref: '3.4',
@@ -82,6 +82,11 @@ export const AC_SOP = {
           ref: '3.6',
           title: 'Refrigerant and asphyxiation',
           body: 'Do not recover or charge refrigerant in unventilated rooms. R32 and similar mildly flammable refrigerants require no ignition sources within the work zone. Leak-check before leaving site.',
+        },
+        {
+          ref: '3.7',
+          title: 'Damaged or broken wiring',
+          body: 'Broken, cut, frayed, nicked, or crushed cables, and insulation that is split, burnt, or stripped beyond the terminal, are a fail. Replace the damaged length or terminate in a rated enclosure. Do not twist, crimp with pliers only, or tape a broken core. Photograph the defect. Cite SOP §3.7 for damaged wiring and SOP §3.3 if the conductors are also exposed.',
         },
       ],
     },
@@ -326,7 +331,7 @@ export const AC_SOP = {
         {
           ref: '12.1',
           title: 'Immediate fail — electrical',
-          body: 'Exposed conductors, missing earth, uncovered outdoor terminals, undersized or shared circuit, or isolation that does not prove dead: verdict fail, severity high.',
+          body: 'Exposed conductors, broken or frayed cables, damaged insulation, missing earth, uncovered outdoor terminals, undersized or shared circuit, or isolation that does not prove dead: verdict fail, severity high. Cite SOP §3.3 for exposed live parts and SOP §3.7 for broken or damaged wiring.',
         },
         {
           ref: '12.2',

@@ -1,5 +1,5 @@
 /**
- * Smoke-test live routes through Phase 8 against a running API (default localhost:3000).
+ * Smoke-test live routes through Phase 9 against a running API (default localhost:3000).
  */
 const BASE = (process.env.SMOKE_BASE_URL || 'http://localhost:3000/api/v1').replace(/\/$/, '');
 const OWNER = { email: process.env.SEED_OWNER_EMAIL || 'owner@siteproof.local', password: process.env.SEED_OWNER_PASSWORD || 'Owner123!' };
@@ -53,13 +53,21 @@ const tinyJpeg = Buffer.from(
   'base64',
 );
 
+function n8nHeaders(extra = {}) {
+  return {
+    'X-Api-Key': N8N_KEY,
+    'X-SiteProof-Timestamp': String(Math.floor(Date.now() / 1000)),
+    ...extra,
+  };
+}
+
 async function login(account) {
   const { json } = await req('POST', '/auth/login', { body: account });
   return json.data?.accessToken;
 }
 
 async function main() {
-  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 8 });
+  await req('GET', '/health', { expect: (s, j) => s === 200 && j.data?.phase === 9 });
   await req('GET', '/health/ready', { expect: (s, j) => s === 200 && j.data?.db === 'up' });
   await req('GET', '/me', { expect: (s, j) => s === 401 && j.error?.code === 'UNAUTHORIZED' });
 
@@ -126,7 +134,17 @@ async function main() {
   });
 
   await req('POST', '/webhooks/n8n/report-ready', {
-    extraHeaders: { 'X-Api-Key': N8N_KEY },
+    extraHeaders: n8nHeaders({ 'X-SiteProof-Timestamp': String(Math.floor(Date.now() / 1000) - 400) }),
+    body: {
+      reportId,
+      jobId,
+      status: 'ready',
+      pdfStorageKey: `reports/${jobId}.pdf`,
+    },
+    expect: (s, j) => s === 401 && j.error?.code === 'UNAUTHORIZED',
+  });
+  await req('POST', '/webhooks/n8n/report-ready', {
+    extraHeaders: n8nHeaders(),
     body: {
       reportId,
       jobId,
@@ -136,7 +154,7 @@ async function main() {
     },
   });
   await req('POST', '/webhooks/n8n/actions', {
-    extraHeaders: { 'X-Api-Key': N8N_KEY },
+    extraHeaders: n8nHeaders(),
     body: { jobId, type: 'report.pdf', target: 'storage', status: 'ok', metadata: { pdfStorageKey: `reports/${jobId}.pdf` } },
   });
   await req('GET', `/jobs/${jobId}`, {
@@ -197,13 +215,25 @@ async function main() {
     expect: (s, j) => s === 200 && typeof j.data?.reply === 'string' && Array.isArray(j.data?.citations),
   });
 
+  const loadStarted = Date.now();
+  const loadPaths = ['/jobs?limit=20', '/issues?limit=20', '/dashboard/summary'];
+  const loadRes = await Promise.all(
+    Array.from({ length: 12 }, (_, i) =>
+      fetch(`${BASE}${loadPaths[i % 3]}`, { headers: { authorization: `Bearer ${ownerToken}` } }),
+    ),
+  );
+  const loadMs = Date.now() - loadStarted;
+  const loadOk = loadRes.every((r) => r.status === 200) && loadMs < 8000;
+  results.push({ ok: loadOk, status: loadOk ? 200 : 500, method: 'GET', path: 'list-load x12', snippet: `ms=${loadMs}` });
+  if (!loadOk) console.error('FAIL list load', loadMs, loadRes.map((r) => r.status));
+
   const failed = results.filter((r) => !r.ok);
   console.table(results.map(({ ok, status, method, path, snippet }) => ({ ok, status, method, path, snippet })));
   if (failed.length) {
     console.error(`${failed.length} check(s) failed`);
     process.exit(1);
   }
-  console.log(`Phase 8 smoke passed (${results.length} checks) against ${BASE}`);
+  console.log(`Phase 9 smoke passed (${results.length} checks) against ${BASE}`);
 }
 
 main().catch((err) => {

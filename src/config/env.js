@@ -19,6 +19,7 @@ const schema = z.object({
   DB_POOL_MAX: z.coerce.number().int().positive().default(20),
   DB_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   DB_CONN_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
 
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
@@ -30,6 +31,9 @@ const schema = z.object({
   N8N_WEBHOOK_URL: z.union([z.string().url(), z.literal('')]).optional(),
   WEBHOOK_SECRET: z.string().min(16),
   N8N_API_KEY: z.string().min(16),
+  WEBHOOK_REPLAY_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
+  QUEUE_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  QUEUE_MAX_PENDING: z.coerce.number().int().positive().default(16),
 
   STORAGE_DRIVER: z.enum(['local', 'cloudinary']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('uploads'),

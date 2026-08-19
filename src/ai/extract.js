@@ -1,10 +1,11 @@
 import { env } from '../config/env.js';
 import { AppError } from '../lib/AppError.js';
+import { WIRING_RE } from '../lib/wiring.js';
 
 const ATTR_KEYS = ['object', 'condition', 'location', 'apparentIssue'];
 
 const HINTS = [
-  { re: /exposed|bare|unsheath|not enclosed/i, object: 'cable', condition: 'exposed', apparentIssue: 'conductors not enclosed' },
+  { re: WIRING_RE, object: 'cable', condition: 'exposed or damaged', apparentIssue: 'conductors not enclosed or wiring damaged' },
   { re: /earth|ground lug|bonding/i, object: 'earth lug', condition: 'loose or missing', apparentIssue: 'protective earth incomplete' },
   { re: /drain|condensate|overflow/i, object: 'condensate drain', condition: 'blocked or no fall', apparentIssue: 'drain not discharging safely' },
   { re: /leak|oil stain|refrigerant|flare/i, object: 'refrigerant joint', condition: 'leak suspected', apparentIssue: 'leak at flares or valves' },
@@ -91,6 +92,8 @@ export async function inspectPhotos({ photos, transcript, site }) {
       type: 'text',
       text: `You inspect HVAC / air-conditioner install photos for SiteProof.
 Return JSON only with keys object, condition, location, apparentIssue (short phrases).
+Look closely at cables, terminals, isolators, and insulation.
+If you see exposed, bare, broken, cut, frayed, nicked, or damaged wires, set object to "cable", condition to "exposed" or "damaged", and apparentIssue to "conductors not enclosed" or "broken wiring".
 Site: ${site || 'unknown'}
 Transcript: ${transcript || '(none)'}`,
     },
@@ -126,5 +129,9 @@ Transcript: ${transcript || '(none)'}`,
     throw new AppError(`Vision failed (${res.status}): ${body.slice(0, 180)}`, 503, 'UNAVAILABLE');
   }
   const json = await res.json();
-  return normalizeAttrs(parseJsonObject(json.choices?.[0]?.message?.content || ''), fallback);
+  const fromVision = normalizeAttrs(parseJsonObject(json.choices?.[0]?.message?.content || ''), fallback);
+  return pickHints(
+    `${transcript || ''} ${fromVision.object} ${fromVision.condition} ${fromVision.apparentIssue}`,
+    fromVision,
+  );
 }

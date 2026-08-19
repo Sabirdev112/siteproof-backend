@@ -3,6 +3,7 @@ import { query } from '../../db/query.js';
 import { ai } from '../../ai/index.js';
 import { getAccessibleJobRow } from '../jobs/jobs.service.js';
 import { retrieveChunks } from '../rulebooks/rulebooks.service.js';
+import { wiringSearchBoost } from '../../lib/wiring.js';
 
 function findingQuery({ transcript, attributes }) {
   return [transcript, attributes?.object, attributes?.condition, attributes?.location, attributes?.apparentIssue]
@@ -22,7 +23,7 @@ export async function checkCompliance(user, body) {
   ]);
   if (!book.rows[0]) throw new AppError('Rulebook not found', 404, 'NOT_FOUND');
 
-  const q = findingQuery(body);
+  const q = wiringSearchBoost(findingQuery(body));
   if (!q) throw new AppError('Finding text is required', 400, 'VALIDATION_ERROR');
 
   let clauses = await retrieveChunks(rulebookId, q, 6);
