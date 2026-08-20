@@ -84,8 +84,9 @@ export async function transcribeAudio({ buffer, mime, filename }) {
 }
 
 /**
- * Describe what is in the photos for the worker to confirm.
- * Uses the job rulebook title as context — not a hardcoded HVAC prompt.
+ * Build finding chips from photos, optionally guided by a voice transcript.
+ * - With transcript: combine voice intent + what the photos show.
+ * - Without transcript: photos only.
  */
 export async function inspectPhotos({ photos, transcript, site, rulebookTitle }) {
   const base = {
@@ -94,9 +95,19 @@ export async function inspectPhotos({ photos, transcript, site, rulebookTitle })
     condition: '',
     apparentIssue: '',
   };
+  const voice = String(transcript || '').trim();
+  const hasVoice = Boolean(voice);
 
   const usable = photos.filter((photo) => photo.buffer?.length > 2048);
   if (!usable.length) {
+    if (hasVoice) {
+      return applySoftHints(voice, {
+        ...base,
+        object: 'equipment',
+        condition: 'from voice note',
+        apparentIssue: voice.slice(0, 200),
+      });
+    }
     return {
       ...base,
       condition: 'needs confirmation',
@@ -105,30 +116,40 @@ export async function inspectPhotos({ photos, transcript, site, rulebookTitle })
   }
 
   if (!env.OPENAI_API_KEY) {
-    return applySoftHints(`${transcript || ''} ${site || ''}`, {
+    return applySoftHints(`${voice} ${site || ''}`, {
       ...base,
       object: 'equipment',
       condition: 'needs confirmation',
-      apparentIssue: 'confirm from photos (AI key not configured)',
+      apparentIssue: hasVoice ? voice.slice(0, 200) : 'confirm from photos (AI key not configured)',
     });
   }
 
   const book = rulebookTitle || 'the selected rulebook';
+  const voiceBlock = hasVoice
+    ? `Voice transcript (worker speaking — treat as primary description of the issue):
+"""
+${voice}
+"""
+Combine the voice note with the photo(s): use the transcript for what the worker claims is wrong, and the photos for visible evidence. Prefer the transcript for apparentIssue when it is clear.`
+    : `No voice note. Use the photo(s) only.`;
+
   const content = [
     {
       type: 'text',
-      text: `You are SiteProof vision for a field inspection.
+      text: `You are SiteProof inspection extract for a field job.
 Rulebook in use: "${book}".
 Return JSON only with keys: object, condition, location, apparentIssue, inScope (boolean).
 
+${voiceBlock}
+
 Rules:
-- Describe ONLY what is visible in the photo(s). Short phrases.
-- Match terminology to this rulebook's domain when the photo clearly fits it.
-- If the photo is blank, unrelated, a random object, a laptop UI, or does not show inspectable work for this rulebook, set inScope to false and put what you see in object/condition/apparentIssue (do not invent findings from the SOP).
-- Never invent HVAC, wiring, battery, or other SOP topics that are not visible.
+- Fill object, condition, location, apparentIssue as short phrases for the confirm screen.
+- Match terminology to this rulebook's domain when the evidence fits it.
+- inScope = true when the photos and/or voice describe inspectable work covered by this rulebook.
+- inScope = false only when BOTH the photos and the voice (if any) are clearly unrelated to this rulebook (blank shot, random object, wrong domain with no matching voice).
+- Never invent HVAC, wiring, battery, or other SOP topics that are not supported by the photo or the voice note.
 - Do not copy SOP clause text into the chips.
-Site: ${site || 'unknown'}
-Transcript: ${transcript || '(none)'}`,
+Site: ${site || 'unknown'}`,
     },
   ];
   for (const photo of usable.slice(0, 4)) {
@@ -163,18 +184,35 @@ Transcript: ${transcript || '(none)'}`,
   const json = await res.json();
   const parsed = parseJsonObject(json.choices?.[0]?.message?.content || '');
   const attrs = normalizeAttrs(parsed, base);
+  // Prefer voice text for empty apparentIssue so compliance can retrieve the right SOP.
+  if (hasVoice && !attrs.apparentIssue) attrs.apparentIssue = voice.slice(0, 200);
+  if (hasVoice && !attrs.object) {
+    const hinted = applySoftHints(voice, attrs);
+    Object.assign(attrs, hinted);
+  }
   const filled = applySoftHints(
-    `${transcript || ''} ${attrs.object} ${attrs.condition} ${attrs.apparentIssue}`,
+    `${voice} ${attrs.object} ${attrs.condition} ${attrs.apparentIssue}`,
     attrs,
   );
 
-  if (parsed && parsed.inScope === false) {
+  if (parsed && parsed.inScope === false && !hasVoice) {
     throw new AppError(
       'The image data does not match any SOP in this rulebook',
       422,
       'SOP_NOT_MATCHED',
-      { attributes: filled, transcript: transcript || '' },
+      { attributes: filled, transcript: voice },
     );
+  }
+  if (parsed && parsed.inScope === false && hasVoice) {
+    // Voice may still be on-topic even if the model disliked the photo framing.
+    if (!filled.object && !filled.apparentIssue) {
+      throw new AppError(
+        'The image data does not match any SOP in this rulebook',
+        422,
+        'SOP_NOT_MATCHED',
+        { attributes: filled, transcript: voice },
+      );
+    }
   }
 
   if (!filled.object && !filled.apparentIssue) {

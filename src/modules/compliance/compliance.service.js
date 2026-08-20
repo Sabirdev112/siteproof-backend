@@ -32,7 +32,15 @@ export async function checkCompliance(user, body) {
   const q = findingQuery(body);
   if (!q) throw new AppError('Finding text is required', 400, 'VALIDATION_ERROR');
 
-  let clauses = await retrieveChunks(rulebookId, q, 8);
+  // Prefer a voice-led retrieval first when a transcript is present, then full blob.
+  const transcript = String(body.transcript || '').trim();
+  let clauses = [];
+  if (transcript) {
+    clauses = await retrieveChunks(rulebookId, transcript, 8);
+  }
+  if (!clauses.length) {
+    clauses = await retrieveChunks(rulebookId, q, 8);
+  }
   if (!clauses.length && body.attributes?.apparentIssue) {
     clauses = await retrieveChunks(rulebookId, body.attributes.apparentIssue, 8);
   }
