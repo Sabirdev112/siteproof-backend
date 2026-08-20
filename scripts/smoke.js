@@ -53,6 +53,27 @@ const tinyJpeg = Buffer.from(
   'base64',
 );
 
+/** Minimal silent WAV so media upload accepts type=audio. */
+function tinyWav() {
+  const samples = 1600;
+  const dataSize = samples * 2;
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + dataSize, 4);
+  buf.write('WAVE', 8);
+  buf.write('fmt ', 12);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(8000, 24);
+  buf.writeUInt32LE(16000, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36);
+  buf.writeUInt32LE(dataSize, 40);
+  return buf;
+}
+
 function n8nHeaders(extra = {}) {
   return {
     'X-Api-Key': N8N_KEY,
@@ -96,26 +117,100 @@ async function main() {
   });
   const mediaId = media.data?.id;
 
+  // Tiny JPEG may be out-of-scope for the SOP — that is a valid extract outcome now.
   const { json: extracted } = await req('POST', '/extract', {
     token: workerToken,
     body: { jobId, mediaIds: [mediaId] },
+    expect: (s, j) =>
+      Boolean((s === 200 && j.data?.attributes) || (s === 422 && j.error?.code === 'SOP_NOT_MATCHED')),
   });
+  const wiringAttrs = {
+    object: 'cable',
+    condition: 'exposed',
+    location: 'isolator',
+    apparentIssue: 'conductors not enclosed',
+  };
+  const wiringTranscript = 'exposed conductors at the outdoor isolator';
+  const attrs = extracted.data?.attributes?.object ? extracted.data.attributes : wiringAttrs;
+  const transcript =
+    extracted.data?.transcript && String(extracted.data.transcript).trim()
+      ? extracted.data.transcript
+      : wiringTranscript;
+
+  // Fix 1: voice note — upload audio, save finding with audioId + transcript, read back on job detail.
+  const audioForm = new FormData();
+  audioForm.append('type', 'audio');
+  audioForm.append('jobId', jobId);
+  audioForm.append('file', new Blob([tinyWav()], { type: 'audio/wav' }), 'smoke-note.wav');
+  const { json: audioMedia } = await req('POST', '/media', {
+    token: workerToken,
+    form: audioForm,
+    extraHeaders: { 'Idempotency-Key': crypto.randomUUID() },
+    expect: (s, j) => Boolean(s === 201 && j.data?.type === 'audio' && j.data?.id),
+  });
+  const audioId = audioMedia.data?.id;
+
+  await req('POST', '/extract', {
+    token: workerToken,
+    body: { jobId, mediaIds: [mediaId], audioId },
+    expect: (s, j) =>
+      Boolean(
+        (s === 200 && typeof j.data?.transcript === 'string') ||
+          (s === 422 && j.error?.code === 'SOP_NOT_MATCHED'),
+      ),
+  });
+
+  // Fix 2: unrelated finding text must not invent a SOP verdict.
+  await req('POST', '/compliance/check', {
+    token: workerToken,
+    body: {
+      jobId,
+      transcript: 'birthday cake with pink frosting and candles',
+      attributes: {
+        object: 'cake',
+        condition: 'frosted',
+        location: 'kitchen',
+        apparentIssue: 'party dessert unrelated to install',
+      },
+    },
+    expect: (s, j) => s === 422 && j.error?.code === 'SOP_NOT_MATCHED',
+  });
+
   const { json: checked } = await req('POST', '/compliance/check', {
     token: workerToken,
-    body: { jobId, transcript: extracted.data.transcript, attributes: extracted.data.attributes },
+    body: { jobId, transcript, attributes: attrs },
+    expect: (s, j) => s === 200 && j.data?.verdict && j.data?.citedClause,
   });
   await req('POST', `/jobs/${jobId}/findings`, {
     token: workerToken,
     body: {
       mediaIds: [mediaId],
-      transcript: extracted.data.transcript,
-      attributes: extracted.data.attributes,
+      audioId,
+      transcript: 'voice note: exposed conductors at isolator need enclosure',
+      attributes: attrs,
       verdict: checked.data.verdict,
       severity: checked.data.severity,
       citedClause: checked.data.citedClause,
       reason: checked.data.reason,
     },
     extraHeaders: { 'Idempotency-Key': crypto.randomUUID() },
+    expect: (s, j) => s === 201 && j.data?.id,
+  });
+
+  await req('GET', `/jobs/${jobId}`, {
+    token: workerToken,
+    expect: (s, j) => {
+      const f = j.data?.findings?.[0];
+      return (
+        s === 200 &&
+        f &&
+        typeof f.transcript === 'string' &&
+        f.transcript.includes('exposed conductors') &&
+        f.audioId === audioId &&
+        typeof f.audioUrl === 'string' &&
+        f.audioUrl.length > 0
+      );
+    },
   });
 
   const { json: closed } = await req('POST', `/jobs/${jobId}/close`, {
@@ -169,8 +264,9 @@ async function main() {
     token: workerToken,
     body: {
       mediaIds: [mediaId],
-      transcript: extracted.data.transcript,
-      attributes: extracted.data.attributes,
+      audioId,
+      transcript: 'voice note: exposed conductors at isolator need enclosure',
+      attributes: attrs,
       verdict: checked.data.verdict,
       severity: checked.data.severity,
       citedClause: checked.data.citedClause,
