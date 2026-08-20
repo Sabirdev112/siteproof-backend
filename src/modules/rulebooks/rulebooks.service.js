@@ -69,12 +69,58 @@ export async function listRulebooks(user) {
   };
 }
 
+function normalizeTitle(title) {
+  return String(title || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 200);
+}
+
+async function findDuplicateRulebook(orgId, title) {
+  const normalized = normalizeTitle(title);
+  if (!normalized) return null;
+  const byTitle = await query(
+    `SELECT id, title FROM rulebooks
+     WHERE org_id = $1 AND lower(trim(title)) = lower($2)
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [orgId, normalized],
+  );
+  if (byTitle.rows[0]) return byTitle.rows[0];
+
+  const byFile = await query(
+    `SELECT r.id, r.title
+     FROM rulebook_documents d
+     JOIN rulebooks r ON r.id = d.rulebook_id
+     WHERE r.org_id = $1
+       AND (
+         lower(d.filename) = lower($2)
+         OR lower(regexp_replace(d.filename, '\\.pdf$', '', 'i')) = lower($2)
+       )
+     ORDER BY d.created_at ASC
+     LIMIT 1`,
+    [orgId, normalized],
+  );
+  return byFile.rows[0] || null;
+}
+
 export async function createRulebook(user, body) {
+  const title = normalizeTitle(body.title);
+  if (!title) throw new AppError('Title is required', 400, 'VALIDATION_ERROR');
+
+  const existing = await findDuplicateRulebook(user.org_id, title);
+  if (existing) {
+    throw new AppError('Rulebook already exists', 409, 'CONFLICT', {
+      existingId: existing.id,
+      existingTitle: existing.title,
+    });
+  }
+
   const result = await query(
     `INSERT INTO rulebooks (org_id, title, vertical, status)
      VALUES ($1, $2, $3, 'draft')
      RETURNING *`,
-    [user.org_id, body.title, body.vertical ?? null],
+    [user.org_id, title, body.vertical ?? null],
   );
   return serializeRulebook(result.rows[0]);
 }
@@ -109,8 +155,30 @@ export async function addDocument(user, rulebookId, file) {
   }
   if (file.size > PDF_MAX_BYTES) throw new AppError('File too large', 413, 'PAYLOAD_TOO_LARGE');
 
-  const id = randomUUID();
   const filename = file.originalname || 'rulebook.pdf';
+  const stem = filename.replace(/\.pdf$/i, '').trim();
+  const dup = await findDuplicateRulebook(user.org_id, stem || filename);
+  if (dup && dup.id !== rulebookId) {
+    throw new AppError('Rulebook already exists', 409, 'CONFLICT', {
+      existingId: dup.id,
+      existingTitle: dup.title,
+    });
+  }
+  const sameFile = await query(
+    `SELECT d.id FROM rulebook_documents d
+     JOIN rulebooks r ON r.id = d.rulebook_id
+     WHERE r.org_id = $1 AND lower(d.filename) = lower($2)
+     LIMIT 1`,
+    [user.org_id, filename],
+  );
+  if (sameFile.rows[0]) {
+    throw new AppError('Rulebook already exists', 409, 'CONFLICT', {
+      existingId: rulebookId,
+      existingTitle: filename,
+    });
+  }
+
+  const id = randomUUID();
   const key = `${user.org_id}/rulebooks/${rulebookId}/${id}.pdf`;
   const stored = await storage.put({ key, body: file.buffer, contentType: 'application/pdf' });
 
