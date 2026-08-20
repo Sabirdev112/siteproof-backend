@@ -16,18 +16,18 @@ function emptyAttrs() {
   return { object: '', condition: '', location: '', apparentIssue: '' };
 }
 
-function pickHints(text, base) {
-  const attrs = { ...emptyAttrs(), ...base };
+/** Soft keyword boost only when vision did not fill a field. Never invent AC defaults. */
+function applySoftHints(text, attrs) {
+  const out = { ...attrs };
   const blob = String(text || '');
   for (const hint of HINTS) {
-    if (hint.re.test(blob)) {
-      attrs.object = hint.object;
-      attrs.condition = hint.condition;
-      attrs.apparentIssue = hint.apparentIssue;
-      break;
-    }
+    if (!hint.re.test(blob)) continue;
+    if (!out.object) out.object = hint.object;
+    if (!out.condition) out.condition = hint.condition;
+    if (!out.apparentIssue) out.apparentIssue = hint.apparentIssue;
+    break;
   }
-  return attrs;
+  return out;
 }
 
 function parseJsonObject(raw) {
@@ -40,9 +40,9 @@ function parseJsonObject(raw) {
   }
 }
 
-function normalizeAttrs(input, fallback) {
+function normalizeAttrs(input, base = emptyAttrs()) {
   const src = input && typeof input === 'object' ? input : {};
-  const out = { ...fallback };
+  const out = { ...base };
   for (const key of ATTR_KEYS) {
     const value = src[key];
     if (typeof value === 'string' && value.trim()) out[key] = value.trim().slice(0, 200);
@@ -76,24 +76,50 @@ export async function transcribeAudio({ buffer, mime, filename }) {
   return String(json.text || '').trim();
 }
 
-export async function inspectPhotos({ photos, transcript, site }) {
-  const fallback = pickHints(`${transcript || ''} ${site || ''}`, {
-    location: site || 'site',
-    object: 'ac unit',
-    condition: 'needs confirmation',
-    apparentIssue: 'confirm from photos',
-  });
+/**
+ * Describe what is in the photos for the worker to confirm.
+ * Uses the job rulebook title as context — not a hardcoded HVAC prompt.
+ */
+export async function inspectPhotos({ photos, transcript, site, rulebookTitle }) {
+  const base = {
+    location: site || '',
+    object: '',
+    condition: '',
+    apparentIssue: '',
+  };
 
   const usable = photos.filter((photo) => photo.buffer?.length > 2048);
-  if (!env.OPENAI_API_KEY || !usable.length) return fallback;
+  if (!usable.length) {
+    return {
+      ...base,
+      condition: 'needs confirmation',
+      apparentIssue: 'no usable photo',
+    };
+  }
 
+  if (!env.OPENAI_API_KEY) {
+    return applySoftHints(`${transcript || ''} ${site || ''}`, {
+      ...base,
+      object: 'equipment',
+      condition: 'needs confirmation',
+      apparentIssue: 'confirm from photos (AI key not configured)',
+    });
+  }
+
+  const book = rulebookTitle || 'the selected rulebook';
   const content = [
     {
       type: 'text',
-      text: `You inspect HVAC / air-conditioner install photos for SiteProof.
-Return JSON only with keys object, condition, location, apparentIssue (short phrases).
-Look closely at cables, terminals, isolators, and insulation.
-If you see exposed, bare, broken, cut, frayed, nicked, or damaged wires, set object to "cable", condition to "exposed" or "damaged", and apparentIssue to "conductors not enclosed" or "broken wiring".
+      text: `You are SiteProof vision for a field inspection.
+Rulebook in use: "${book}".
+Return JSON only with keys: object, condition, location, apparentIssue, inScope (boolean).
+
+Rules:
+- Describe ONLY what is visible in the photo(s). Short phrases.
+- Match terminology to this rulebook's domain when the photo clearly fits it.
+- If the photo is blank, unrelated, a random object, a laptop UI, or does not show inspectable work for this rulebook, set inScope to false and put what you see in object/condition/apparentIssue (do not invent findings from the SOP).
+- Never invent HVAC, wiring, battery, or other SOP topics that are not visible.
+- Do not copy SOP clause text into the chips.
 Site: ${site || 'unknown'}
 Transcript: ${transcript || '(none)'}`,
     },
@@ -125,13 +151,32 @@ Transcript: ${transcript || '(none)'}`,
   }
   if (!res.ok) {
     const body = await res.text();
-    if (res.status === 400) return fallback;
     throw new AppError(`Vision failed (${res.status}): ${body.slice(0, 180)}`, 503, 'UNAVAILABLE');
   }
   const json = await res.json();
-  const fromVision = normalizeAttrs(parseJsonObject(json.choices?.[0]?.message?.content || ''), fallback);
-  return pickHints(
-    `${transcript || ''} ${fromVision.object} ${fromVision.condition} ${fromVision.apparentIssue}`,
-    fromVision,
+  const parsed = parseJsonObject(json.choices?.[0]?.message?.content || '');
+  const attrs = normalizeAttrs(parsed, base);
+  const filled = applySoftHints(
+    `${transcript || ''} ${attrs.object} ${attrs.condition} ${attrs.apparentIssue}`,
+    attrs,
   );
+
+  if (parsed && parsed.inScope === false) {
+    throw new AppError(
+      'The image data does not match any SOP in this rulebook',
+      422,
+      'SOP_NOT_MATCHED',
+      { attributes: filled, transcript: transcript || '' },
+    );
+  }
+
+  if (!filled.object && !filled.apparentIssue) {
+    throw new AppError(
+      'The image data does not match any SOP in this rulebook',
+      422,
+      'SOP_NOT_MATCHED',
+    );
+  }
+
+  return filled;
 }

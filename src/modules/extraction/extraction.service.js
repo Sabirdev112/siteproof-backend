@@ -17,6 +17,15 @@ async function loadMedia(orgId, id, expectedType) {
 export async function extractFinding(user, body) {
   const job = await getAccessibleJobRow(user, body.jobId);
 
+  let rulebookTitle = '';
+  if (job.rulebook_id) {
+    const book = await query(`SELECT title FROM rulebooks WHERE id = $1 AND org_id = $2`, [
+      job.rulebook_id,
+      user.org_id,
+    ]);
+    rulebookTitle = book.rows[0]?.title || '';
+  }
+
   const photos = [];
   for (const id of body.mediaIds) {
     const row = await loadMedia(user.org_id, id, 'photo');
@@ -40,6 +49,7 @@ export async function extractFinding(user, body) {
     photos,
     transcript,
     site: job.site,
+    rulebookTitle,
   });
 
   return { transcript, attributes };
