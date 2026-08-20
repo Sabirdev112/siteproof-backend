@@ -43,7 +43,7 @@ async function persistRefresh(userId, issued) {
   );
 }
 
-export async function login({ email, password }) {
+export async function login({ email, password, client }) {
   const result = await query(`${USER_SQL} WHERE u.email_normalized = $1 AND u.is_active = true`, [
     email.trim().toLowerCase(),
   ]);
@@ -53,6 +53,13 @@ export async function login({ email, password }) {
   const { user, org } = toUser(row);
   const matches = await bcrypt.compare(password, user.password_hash);
   if (!matches) throw new AppError('Invalid email or password', 401, 'UNAUTHORIZED');
+
+  if (client === 'mobile' && user.role !== 'worker') {
+    throw new AppError('This app is for field workers only', 403, 'FORBIDDEN');
+  }
+  if (client === 'office' && user.role === 'worker') {
+    throw new AppError('Field work lives in the phone app', 403, 'FORBIDDEN');
+  }
 
   const issued = issueRefreshToken();
   await persistRefresh(user.id, issued);

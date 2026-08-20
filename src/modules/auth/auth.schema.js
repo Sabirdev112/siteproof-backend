@@ -4,6 +4,7 @@ export const loginSchema = z.object({
   body: z.object({
     email: z.string().email(),
     password: z.string().min(1),
+    client: z.enum(['mobile', 'office']).optional(),
   }),
 });
 
