@@ -2,7 +2,9 @@ import { query, withTransaction } from '../../db/query.js';
 import { AppError } from '../../lib/AppError.js';
 import { findIdempotentResponse, saveIdempotentResponse } from '../../lib/idempotency.js';
 import { jobSummary, serializeReport } from '../../lib/serialize.js';
-import { urlsForMediaIds } from '../media/media.service.js';
+import { urlsForMediaIds, audioFromMediaIds } from '../media/media.service.js';
+import { storage } from '../../storage/index.js';
+import { ai } from '../../ai/index.js';
 import { queues } from '../../queues/index.js';
 import { enqueue } from '../../events/outbox.js';
 import { buildJobClosedPayload, newOutboxId } from '../../events/payload.js';
@@ -233,11 +235,15 @@ export async function getJob(user, id, baseUrl = '', { n8n } = {}) {
   const reportRow = report.rows[0];
   const findingsOut = [];
   for (const finding of findings.rows) {
+    const mediaIds = finding.media_ids ?? [];
+    const audio = await audioFromMediaIds(user?.org_id || row.org_id, mediaIds, baseUrl);
     findingsOut.push({
       id: finding.id,
-      mediaIds: finding.media_ids ?? [],
-      photoUrls: await urlsForMediaIds(user?.org_id || row.org_id, finding.media_ids ?? [], baseUrl),
-      transcript: finding.transcript,
+      mediaIds,
+      photoUrls: await urlsForMediaIds(user?.org_id || row.org_id, mediaIds, baseUrl),
+      audioId: audio.audioId,
+      audioUrl: audio.audioUrl,
+      transcript: finding.transcript || '',
       attributes: finding.attributes ?? {},
       verdict: finding.verdict,
       severity: finding.severity,
@@ -270,15 +276,30 @@ export async function createFinding(user, jobId, body, { idempotencyKey, method,
   const job = await getAccessibleJobRow(user, jobId);
   if (job.status === 'closed') throw new AppError('Job already closed', 409, 'CONFLICT');
 
-  const ids = [...body.mediaIds];
-  if (body.audioId) ids.push(body.audioId);
+  const photoIds = [...body.mediaIds];
+  const audioId = body.audioId || null;
+  const ids = audioId ? [...photoIds, audioId] : photoIds;
   const media = await query(
-    `SELECT id FROM media WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+    `SELECT id, type, mime, storage_key FROM media WHERE org_id = $1 AND id = ANY($2::uuid[])`,
     [user.org_id, ids],
   );
   if (media.rows.length !== ids.length) {
     throw new AppError('Media not found for this org', 422, 'UNPROCESSABLE');
   }
+
+  let transcript = String(body.transcript || '').trim();
+  if (audioId && !transcript) {
+    const audio = media.rows.find((row) => row.id === audioId || String(row.id) === String(audioId));
+    if (audio?.type === 'audio') {
+      transcript = await ai.transcribe({
+        buffer: await storage.getBuffer(audio.storage_key),
+        mime: audio.mime,
+        filename: `voice-note.${(audio.mime || '').includes('mpeg') ? 'mp3' : 'm4a'}`,
+      });
+    }
+  }
+
+  const storedMediaIds = audioId && !photoIds.includes(audioId) ? [...photoIds, audioId] : photoIds;
 
   return withTransaction(async (client) => {
     const inserted = await client.query(
@@ -286,11 +307,11 @@ export async function createFinding(user, jobId, body, { idempotencyKey, method,
          job_id, media_ids, transcript, attributes, verdict, severity, cited_clause, reason
        )
        VALUES ($1, $2::uuid[], $3, $4::jsonb, $5, $6, $7::jsonb, $8)
-       RETURNING id, verdict, severity`,
+       RETURNING id, verdict, severity, transcript`,
       [
         jobId,
-        body.mediaIds,
-        body.transcript || '',
+        storedMediaIds,
+        transcript,
         JSON.stringify(body.attributes || {}),
         body.verdict,
         body.severity,
@@ -298,7 +319,14 @@ export async function createFinding(user, jobId, body, { idempotencyKey, method,
         body.reason,
       ],
     );
-    const data = inserted.rows[0];
+    const row = inserted.rows[0];
+    const data = {
+      id: row.id,
+      verdict: row.verdict,
+      severity: row.severity,
+      transcript: row.transcript || '',
+      audioId: audioId || null,
+    };
     await saveIdempotentResponse(client, {
       userId: user.id,
       key: idempotencyKey,

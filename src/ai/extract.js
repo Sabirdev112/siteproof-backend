@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { AppError } from '../lib/AppError.js';
+import { extensionFor } from '../lib/mediaTypes.js';
 import { WIRING_RE } from '../lib/wiring.js';
 
 const ATTR_KEYS = ['object', 'condition', 'location', 'apparentIssue'];
@@ -54,8 +55,14 @@ export async function transcribeAudio({ buffer, mime, filename }) {
   if (!buffer?.length) return '';
   if (!env.OPENAI_API_KEY) return '';
 
+  const safeName = filename || `note.${extensionFor(mime) || 'm4a'}`;
   const form = new FormData();
-  form.append('file', new Blob([buffer], { type: mime || 'audio/mpeg' }), filename || 'note.m4a');
+  // OpenAI Whisper needs a named file; Blob alone often yields empty text on Node.
+  const file =
+    typeof File !== 'undefined'
+      ? new File([buffer], safeName, { type: mime || 'audio/mp4' })
+      : new Blob([buffer], { type: mime || 'audio/mp4' });
+  form.append('file', file, safeName);
   form.append('model', env.OPENAI_TRANSCRIBE_MODEL);
 
   let res;

@@ -56,6 +56,18 @@ export async function urlsForMediaIds(orgId, mediaIds, baseUrl) {
   return urls;
 }
 
+export async function audioFromMediaIds(orgId, mediaIds, baseUrl) {
+  if (!mediaIds?.length) return { audioId: null, audioUrl: null };
+  const result = await query(
+    `SELECT * FROM media WHERE org_id = $1 AND id = ANY($2::uuid[]) AND type = 'audio'
+     ORDER BY created_at ASC LIMIT 1`,
+    [orgId, mediaIds],
+  );
+  const row = result.rows[0];
+  if (!row) return { audioId: null, audioUrl: null };
+  return { audioId: row.id, audioUrl: await signedUrlFor(row, baseUrl) };
+}
+
 export async function createMedia(user, { file, type, jobId }, { idempotencyKey, method, path, baseUrl }) {
   if (idempotencyKey) {
     const replay = await findIdempotentResponse(user.id, idempotencyKey);
