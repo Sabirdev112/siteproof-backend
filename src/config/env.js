@@ -7,6 +7,22 @@ const csv = (value) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+/** Parse `user:pass,user2:pass2` into [{ username, password }, ...]. */
+const docsUsers = (value) => {
+  if (!value?.trim()) return [];
+  return value.split(',').map((pair) => {
+    const trimmed = pair.trim();
+    const sep = trimmed.indexOf(':');
+    if (sep <= 0 || sep === trimmed.length - 1) {
+      throw new Error(`Invalid DOCS_USERS entry "${trimmed}" (expected user:password)`);
+    }
+    return {
+      username: trimmed.slice(0, sep),
+      password: trimmed.slice(sep + 1),
+    };
+  });
+};
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -14,6 +30,26 @@ const schema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true' || value === '1'),
+
+  // Swagger /docs Basic Auth. Example: you:secret,asad:another-secret
+  DOCS_USERS: z
+    .string()
+    .default('')
+    .superRefine((value, ctx) => {
+      if (!value.trim()) return;
+      for (const pair of value.split(',')) {
+        const trimmed = pair.trim();
+        if (!trimmed) continue;
+        const sep = trimmed.indexOf(':');
+        if (sep <= 0 || sep === trimmed.length - 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Invalid entry "${trimmed}" (expected user:password)`,
+          });
+        }
+      }
+    })
+    .transform((value) => docsUsers(value)),
 
   DATABASE_URL: z.string().min(1),
   DB_POOL_MAX: z.coerce.number().int().positive().default(20),
