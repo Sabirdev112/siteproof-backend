@@ -1,6 +1,4 @@
 node_modules/
-.env
-.env.local
 .env.*.local
 uploads/
 *.log
@@ -9,10 +7,10 @@ Thumbs.db
 coverage/
 dist/
 .idea/
-.vscode/
 _spec_extract.txt
 n8n_webhooks.md
 frontend_api.md
 phases.md
 SiteProof_Technical_Spec.pdf
 /dashboard/
+config.bat

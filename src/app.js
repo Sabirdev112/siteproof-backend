@@ -9,6 +9,7 @@ import { requestId } from './middleware/requestId.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { api } from './modules/index.js';
+import { mountSwagger } from './swagger/index.js';
 
 export function createApp() {
   const app = express();
@@ -20,7 +21,10 @@ export function createApp() {
     pinoHttp({
       logger,
       genReqId: (req) => req.id,
-      autoLogging: { ignore: (req) => req.url === '/api/v1/health' },
+      autoLogging: {
+        ignore: (req) =>
+          req.url === '/api/v1/health' || req.url?.startsWith('/docs'),
+      },
       customLogLevel: (_req, res) => {
         if (res.statusCode === 501) return 'warn';
         if (res.statusCode >= 500) return 'error';
@@ -32,6 +36,15 @@ export function createApp() {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
+      // Swagger UI needs inline scripts/styles
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          'script-src': ["'self'", "'unsafe-inline'"],
+          'style-src': ["'self'", "'unsafe-inline'"],
+          'img-src': ["'self'", 'data:', 'https:'],
+        },
+      },
     }),
   );
   app.use(
@@ -44,6 +57,7 @@ export function createApp() {
         'X-Request-Id',
         'Idempotency-Key',
         'X-Api-Key',
+        'X-Siteproof-Timestamp',
       ],
       exposedHeaders: ['X-Request-Id'],
     }),
@@ -54,6 +68,7 @@ export function createApp() {
   app.use(apiLimiter);
 
   app.get('/health', (_req, res) => res.redirect(307, '/api/v1/health'));
+  mountSwagger(app);
   app.use('/api/v1', api);
   app.use(notFound);
   app.use(errorHandler);
